@@ -1,0 +1,5 @@
+# Dirs #
+########
+build/
+dist/
+VTKwrite.egg-info/ 
