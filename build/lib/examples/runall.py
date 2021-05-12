@@ -8,7 +8,7 @@ import poly_lines
 import rectilinear 
 import structured 
 import unstructured 
-import lowlevel
+import low_level
 
 def testit(test):
     try:
@@ -25,7 +25,7 @@ def clean_all():
     rectilinear.clean()
     structured.clean()
     unstructured.clean()
-    lowlevel.clean()
+    low_level.clean()
     try:
         shutil.rmtree("__pycache__")
     except:
@@ -40,7 +40,7 @@ def test_all():
     testit(rectilinear.run)
     testit(structured.run)
     testit(unstructured.run)
-    testit(lowlevel.run)
+    testit(low_level.run)
 
 if __name__ == "__main__":
     import sys

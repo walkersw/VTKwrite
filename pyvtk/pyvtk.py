@@ -11,7 +11,7 @@ import sys
 try:
     import numpy as np
 except:
-    print("Numpy is not installed. Please install it before running EVTK again.")
+    print("Numpy is not installed. Please install it before running VTKwrite again.")
 
 # Map numpy dtype to struct format
 np_to_struct = { 'int8'    : 'b',

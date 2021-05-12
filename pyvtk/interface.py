@@ -10,43 +10,94 @@ from .vtkbin import * # VtkFile, VtkUnstructuredGrid, etc.
 try:
     import numpy as np
 except:
-    print("Numpy is not installed. Please install it before running EVTK again.")
+    print("Numpy is not installed. Please install it before running VTKwrite again.")
 
 # =================================
 #       Helper functions
 # =================================
-def _addDataToFile(vtkFile, cellData, pointData):
+def _addDataToFile(vtkFile, all_cell_data, all_point_data):
+    dt_strs = ["scalars", "vectors", "normals", "tensors", "tcoords"]
+    ncomp_dict = {"scalars" : 1, "vectors" : 3, "normals" : 3, "tensors" : 9, "tcoords" : 0}
+    # SWW: tcoords not supported properly...
+    
+    # initialize dicts for setting default scalars, vectors, etc...
+    default_cell_vars  = {}
+    default_point_vars = {}
+    
+    # get default vars for each data-type
+    for dt in dt_strs:
+        if all_point_data is not None:
+            if dt in all_point_data:
+                temp_pointData = all_point_data[dt]
+                if temp_pointData is not None:
+                    keys = sorted(list(temp_pointData.keys()))
+                    default_point_vars[dt] = keys[0]
+
+    # get default vars for each data-type
+    for dt in dt_strs:
+        if all_cell_data is not None:
+            if dt in all_cell_data:
+                temp_cellData = all_cell_data[dt]
+                if temp_cellData is not None:
+                    keys = sorted(list(temp_cellData.keys()))
+                    default_cell_vars[dt] = keys[0]
+
     # Point data
-    if pointData:
-        keys = sorted(list(pointData.keys()))
-        vtkFile.openData("Point", scalars = keys[0])
-        for key in keys:
-            data = pointData[key]
-            vtkFile.addData(key, data)
+    if default_point_vars:
+        vtkFile.openData("Point", **default_point_vars)
+        dt_keys = sorted(list(all_point_data.keys()))
+        for dt in dt_keys:
+            pointData = all_point_data[dt]
+            if pointData:
+                pd_keys = sorted(list(pointData.keys()))
+                for pd_name in pd_keys:
+                    vtkFile.internal_addData(pd_name, pointData[pd_name], ncomp_dict[dt])
         vtkFile.closeData("Point")
 
     # Cell data
-    if cellData:
-        keys = sorted(list(cellData.keys()))
-        vtkFile.openData("Cell", scalars = keys[0])
-        for key in keys:
-            data = cellData[key]
-            vtkFile.addData(key, data)
+    if default_cell_vars:
+        vtkFile.openData("Cell", **default_cell_vars)
+        dt_keys = sorted(list(all_cell_data.keys()))
+        for dt in dt_keys:
+            cellData = all_cell_data[dt]
+            if cellData:
+                cd_keys = sorted(list(cellData.keys()))
+                for cd_name in cd_keys:
+                    vtkFile.internal_addData(cd_name, cellData[cd_name], ncomp_dict[dt])
         vtkFile.closeData("Cell")
 
-def _appendDataToFile(vtkFile, cellData, pointData):
-    # Append data to binary section
-    if pointData != None:
-        keys = sorted(list(pointData.keys()))
-        for key in keys:
-            data = pointData[key]
-            vtkFile.appendData(data)
+def _appendDataToFile(vtkFile, all_cell_data, all_point_data):
+    dt_strs = ["scalars", "vectors", "normals", "tensors", "tcoords"]
+    ncomp_dict = {"scalars" : 1, "vectors" : 3, "normals" : 3, "tensors" : 9, "tcoords" : 0}
+    # SWW: tcoords not supported properly...
+    
+    # append data to binary section
+    
+    # point based data
+    if all_point_data is not None:
+        dt_keys = sorted(list(all_point_data.keys()))
+    else:
+        dt_keys = []
+    for dt in dt_keys:
+        pointData = all_point_data[dt]
+        if pointData is not None:
+            pd_keys = sorted(list(pointData.keys()))
+            for pd_name in pd_keys:
+                data = pointData[pd_name]
+                vtkFile.appendData(data)
 
-    if cellData != None:
-        keys = sorted(list(cellData.keys()))
-        for key in keys:
-            data = cellData[key]
-            vtkFile.appendData(data)
+    # cell based data
+    if all_cell_data is not None:
+        dt_keys = sorted(list(all_cell_data.keys()))
+    else:
+        dt_keys = []
+    for dt in dt_keys:
+        cellData = all_cell_data[dt]
+        if cellData is not None:
+            cd_keys = sorted(list(cellData.keys()))
+            for cd_name in cd_keys:
+                data = cellData[cd_name]
+                vtkFile.appendData(data)
 
 def __convertListToArray(list1d):
     ''' If data is a list and no a Numpy array, then it convert it
@@ -72,58 +123,76 @@ def __convertDictListToArrays(data):
 # =================================
 #       High level functions      
 # =================================
-def imageToVTK(path, origin = (0.0,0.0,0.0), spacing = (1.0,1.0,1.0), cellData = None, pointData = None, comments = None ):
+def imageToVTK(path, origin = (0.0,0.0,0.0), spacing = (1.0,1.0,1.0), all_cell_data = None, all_point_data = None, comments = None ):
     """ Exports data values as a rectangular image.
         
         PARAMETERS:
             path: name of the file without extension where data should be saved.
             origin: grid origin (default = (0,0,0))
             spacing: grid spacing (default = (1,1,1))
-            cellData: dictionary containing arrays with cell centered data.
-                      Keys should be the names of the data arrays.
-                      Arrays must have the same dimensions in all directions and must contain 
-                      only scalar data.
-            nodeData: dictionary containing arrays with node centered data.
-                      Keys should be the names of the data arrays.
-                      Arrays must have same dimension in each direction and 
-                      they should be equal to the dimensions of the cell data plus one and
-                      must contain only scalar data.
+            
+            all_cell_data: A Dict of Dicts.  It has this format:
+                    all_cell_data[key] = cellData, where
+                    key = "scalars" only, i.e. no other keys (only scalar data is allowed).
+                    cellData is a Dictionary of variables associated with the grid cells:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific cellData must have the same number of elements.
+            all_point_data: A Dict of Dicts.  It has this format:
+                    all_point_data[key] = pointData, where
+                    key = "scalars" only, i.e. no other keys (only scalar data is allowed).
+                    pointData is a Dictionary of variables associated with the grid vertices:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific pointData must have the same number of elements.
             comments: list of comment strings, which will be added to the header section of the file.
          
          RETURNS:
             Full path to saved file.
 
-        NOTE: At least, cellData or pointData must be present to infer the dimensions of the image.
+        NOTE: At least, all_cell_data or all_point_data must be present to infer the dimensions of the image.
     """
-    assert (cellData != None or pointData != None)
+    assert (all_cell_data != None or all_point_data != None)
     
     # Extract dimensions
     start = (0,0,0)
     end = None
-    if cellData != None:
-        keys = list(cellData.keys())
-        data = cellData[keys[0]]
-        end = data.shape
-    elif pointData != None:
-        keys = list(pointData.keys())
-        data = pointData[keys[0]]
-        end = data.shape
-        end = (end[0] - 1, end[1] - 1, end[2] - 1)
+    
+    if all_cell_data != None:
+        ac_keys = sorted(list(all_cell_data.keys()))
+        assert (len(ac_keys) == 1)
+        assert (ac_keys[0] == "scalars")
+        cellData = all_cell_data["scalars"]
+        if cellData != None:
+            keys = list(cellData.keys())
+            data = cellData[keys[0]]
+            end = data.shape
 
+    if all_point_data != None:
+        ap_keys = sorted(list(all_point_data.keys()))
+        assert (len(ap_keys) == 1)
+        assert (ap_keys[0] == "scalars")
+        pointData = all_point_data["scalars"]
+        if (pointData != None) and (end == None):
+            keys = list(pointData.keys())
+            data = pointData[keys[0]]
+            end = data.shape
+            end = (end[0] - 1, end[1] - 1, end[2] - 1)
+    
     # Write data to file
     w = VtkFile(path, VtkImageData)
     if comments: w.addComments(comments)
     w.openGrid(start = start, end = end, origin = origin, spacing = spacing)
     w.openPiece(start = start, end = end)
-    _addDataToFile(w, cellData, pointData)
+    _addDataToFile(w, all_cell_data, all_point_data)
     w.closePiece()
     w.closeGrid()
-    _appendDataToFile(w, cellData, pointData)
+    _appendDataToFile(w, all_cell_data, all_point_data)
     w.save()
     return w.getFileName()
 
 # ==============================================================================
-def rectilinearToVTK(path, x, y, z, cellData = None, pointData = None, comments = None):
+def rectilinearToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comments = None):
     """
         Writes data values as a rectilinear or rectangular grid.
 
@@ -132,15 +201,22 @@ def rectilinearToVTK(path, x, y, z, cellData = None, pointData = None, comments 
             x, y, z: coordinates of the nodes of the grid as 1D arrays.
                      The grid should be Cartesian, i.e. faces in all cells are orthogonal.
                      Arrays size should be equal to the number of nodes of the grid in each direction.
-            cellData: dictionary containing arrays with cell centered data.
-                      Keys should be the names of the data arrays.
-                      Arrays must have the same dimensions in all directions and must contain 
-                      only scalar data.
-            pointData: dictionary containing arrays with node centered data.
-                       Keys should be the names of the data arrays.
-                       Arrays must have same dimension in each direction and 
-                       they should be equal to the dimensions of the cell data plus one and
-                       must contain only scalar data.
+
+            all_cell_data: A Dict of Dicts.  It has this format:
+                    all_cell_data[key] = cellData, where
+                    key = "scalars" only, i.e. no other keys (only scalar data is allowed).
+                    cellData is a Dictionary of variables associated with the grid cells:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific cellData must have the same number of elements.
+            all_point_data: A Dict of Dicts.  It has this format:
+                    all_point_data[key] = pointData, where
+                    key = "scalars" only, i.e. no other keys (only scalar data is allowed).
+                    pointData is a Dictionary of variables associated with the grid vertices:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific pointData must have the same number of elements,
+                        and must equal the number of elements in cellData *plus one*.
             comments: list of comment strings, which will be added to the header section of the file.
             
         RETURNS:
@@ -154,6 +230,16 @@ def rectilinearToVTK(path, x, y, z, cellData = None, pointData = None, comments 
     start = (0,0,0)
     end   = (nx, ny, nz)
     
+    if all_cell_data != None:
+        ac_keys = sorted(list(all_cell_data.keys()))
+        assert (len(ac_keys) == 1)
+        assert (ac_keys[0] == "scalars")
+
+    if all_point_data != None:
+        ap_keys = sorted(list(all_point_data.keys()))
+        assert (len(ap_keys) == 1)
+        assert (ap_keys[0] == "scalars")
+    
     w =  VtkFile(path, ftype)
     if comments: w.addComments(comments)
     w.openGrid(start = start, end = end)
@@ -165,18 +251,18 @@ def rectilinearToVTK(path, x, y, z, cellData = None, pointData = None, comments 
     w.addData("z_coordinates", z)
     w.closeElement("Coordinates")
 
-    _addDataToFile(w, cellData, pointData)
+    _addDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
     w.closePiece()
     w.closeGrid()
     # Write coordinates
     w.appendData(x).appendData(y).appendData(z)
     # Write data
-    _appendDataToFile(w, cellData, pointData)
+    _appendDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
     w.save()
     return w.getFileName()
     
 
-def structuredToVTK(path, x, y, z, cellData = None, pointData = None, comments = None):
+def structuredToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comments = None):
     """
         Writes data values as a rectilinear or rectangular grid.
 
@@ -185,15 +271,21 @@ def structuredToVTK(path, x, y, z, cellData = None, pointData = None, comments =
             x, y, z: coordinates of the nodes of the grid as 3D arrays.
                      The grid should be structured, i.e. all cells should have the same number of neighbors.
                      Arrays size in each dimension should be equal to the number of nodes of the grid in each direction.
-            cellData: dictionary containing arrays with cell centered data.
-                      Keys should be the names of the data arrays.
-                      Arrays must have the same dimensions in all directions and must contain 
-                      only scalar data.
-            pointData: dictionary containing arrays with node centered data.
-                       Keys should be the names of the data arrays.
-                       Arrays must have same dimension in each direction and 
-                       they should be equal to the dimensions of the cell data plus one and
-                       must contain only scalar data.
+            all_cell_data: A Dict of Dicts.  It has this format:
+                    all_cell_data[key] = cellData, where
+                    key = "scalars" only, i.e. no other keys (only scalar data is allowed).
+                    cellData is a Dictionary of variables associated with the grid cells:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific cellData must have the same number of elements.
+            all_point_data: A Dict of Dicts.  It has this format:
+                    all_point_data[key] = pointData, where
+                    key = "scalars" only, i.e. no other keys (only scalar data is allowed).
+                    pointData is a Dictionary of variables associated with the grid vertices:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific pointData must have the same number of elements,
+                        and must equal the number of elements in cellData *plus one*.
             comments: list of comment strings, which will be added to the header section of the file.
             
         RETURNS:
@@ -207,7 +299,17 @@ def structuredToVTK(path, x, y, z, cellData = None, pointData = None, comments =
     nx, ny, nz = s[0] - 1, s[1] - 1, s[2] - 1
     start = (0,0,0)
     end = (nx, ny, nz)
- 
+
+    if all_cell_data != None:
+        ac_keys = sorted(list(all_cell_data.keys()))
+        assert (len(ac_keys) == 1)
+        assert (ac_keys[0] == "scalars")
+
+    if all_point_data != None:
+        ap_keys = sorted(list(all_point_data.keys()))
+        assert (len(ap_keys) == 1)
+        assert (ap_keys[0] == "scalars")
+
     w =  VtkFile(path, ftype)
     if comments: w.addComments(comments)
     w.openGrid(start = start, end = end)
@@ -216,11 +318,11 @@ def structuredToVTK(path, x, y, z, cellData = None, pointData = None, comments =
     w.addData("points", (x,y,z))
     w.closeElement("Points")
 
-    _addDataToFile(w, cellData, pointData)
+    _addDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
     w.closePiece()
     w.closeGrid()
     w.appendData( (x,y,z) )
-    _appendDataToFile(w, cellData, pointData)
+    _appendDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
     w.save()
     return w.getFileName()
     
@@ -300,33 +402,41 @@ def structuredToVTK(path, x, y, z, cellData = None, pointData = None, comments =
 
 
 # ==============================================================================
-def pointsToVTK(path, x, y, z, data = None, comments = None ):
+def pointsToVTK(path, x, y, z, all_point_data = None, comments = None ):
     """
         Export points and associated data as an unstructured grid.
 
         PARAMETERS:
             path: name of the file without extension where data should be saved.
             x, y, z: 1D list-type object (list, tuple or numpy) with coordinates of the points.
-            data: dictionary with variables associated to each point.
-                  Keys should be the names of the variable stored in each array.
-                  All 1D list-type object (list, tuple or numpy) must have the same number of elements.
+            all_point_data: A Dict of Dicts.  It has this format:
+                    all_point_data[key] = pointData, where
+                    key = "scalars", "vectors", "normals", "tensors", or "tcoords", (not all are necessary) and
+                    pointData is a Dictionary of variables associated with the grid vertices:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific pointData must have the same number of elements.
             comments: list of comment strings, which will be added to the header section of the file.
             
         RETURNS:
             Full path to saved file.
 
     """
-    assert (len(x) == len(y) == len(z) )
+    assert ( len(x) == len(y) == len(z) )
     x = __convertListToArray(x)
     y = __convertListToArray(y)
     z = __convertListToArray(z)
-    data = __convertDictListToArrays(data)
+    
+    if all_point_data is not None:
+        ap_keys = sorted(list(all_point_data.keys()))
+        for key in ap_keys:
+            all_point_data[key] = __convertDictListToArrays(all_point_data[key])
     
     npoints = len(x)
     
     # create some temporary arrays to write grid topology
-    offsets = np.arange(start = 1, stop = npoints + 1, dtype = 'int32')   # index of last node in each cell
-    connectivity = np.arange(npoints, dtype = 'int32')                    # each point is only connected to itself
+    offsets = np.arange(start = 1, stop = npoints + 1, dtype = 'int32') # index of last node in each cell
+    connectivity = np.arange(npoints, dtype = 'int32')                 # each point is only connected to itself
     cell_types = np.empty(npoints, dtype = 'uint8') 
    
     cell_types[:] = VtkVertex.tid
@@ -345,14 +455,14 @@ def pointsToVTK(path, x, y, z, data = None, comments = None ):
     w.addData("types", cell_types)
     w.closeElement("Cells")
     
-    _addDataToFile(w, cellData = None, pointData = data)
+    _addDataToFile(w, all_cell_data = None, all_point_data = all_point_data)
 
     w.closePiece()
     w.closeGrid()
     w.appendData( (x,y,z) )
     w.appendData(connectivity).appendData(offsets).appendData(cell_types)
 
-    _appendDataToFile(w, cellData = None, pointData = data)
+    _appendDataToFile(w, all_cell_data = None, all_point_data = all_point_data)
 
     w.save()
     return w.getFileName()
@@ -360,7 +470,7 @@ def pointsToVTK(path, x, y, z, data = None, comments = None ):
 # ==============================================================================
 def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
     """
-        Export points and associated data as a triangula irregular grid.
+        Export points and associated data as a triangular irregular grid.
         It builds a triangular grid that has the input points as nodes
         using the Delaunay triangulation function in Scipy, which requires
         a convex set of points (check the documentation for further details
@@ -369,7 +479,7 @@ def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
         PARAMETERS:
             path: name of the file without extension where data should be saved.
             x, y, z: 1D list-type object (list, tuple or numpy) with coordinates of the points.
-            data: dictionary with variables associated to each point.
+            data: (THIS IS NOT ACTUALLY USED!) dictionary with variables associated to each point.
                   Keys should be the names of the variable stored in each array.
                   All 1D list-type object (list, tuple or numpy) must have the same number of elements.
             comments: list of comment strings, which will be added to the header section of the file.
@@ -416,25 +526,39 @@ def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
         
     offset = np.zeros(ncells)
     for i in range(ncells): offset[i] = (i + 1) * 3
-        
+    
+    # initialize the data structure
+    all_point_data = {"scalars" : None}
+    pointData_sc = {"Elevation" : z}
+    all_point_data["scalars"] = pointData_sc
+
     cell_type = np.ones(ncells) * VtkTriangle.tid
-    unstructuredGridToVTK(path, x, y, z, connectivity = conn, offsets = offset, cell_types = cell_type, cellData = None, pointData = {"Elevation" : z}, comments = None)
+    unstructuredGridToVTK(path, x, y, z, connectivity = conn, offsets = offset, cell_types = cell_type, all_cell_data = None, all_point_data = all_point_data, comments = None)
         
 # ==============================================================================
-def linesToVTK(path, x, y, z, cellData = None, pointData = None, comments = None ):
+def linesToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comments = None ):
     """
-        Export line segments that joint 2 points and associated data.
+        Export line segments that join 2 points and associated data.
 
         PARAMETERS:
             path: name of the file without extension where data should be saved.
             x, y, z: 1D list-type object (list, tuple or numpy) with coordinates of the vertex of the lines. It is assumed that each line.
-                     is defined by two points, then the lenght of the arrays should be equal to 2 * number of lines.
-            cellData: dictionary with variables associated to each line.
-                  Keys should be the names of the variable stored in each array.
-                  All 1D list-type object (list, tuple or numpy) must have the same number of elements.         
-            pointData: dictionary with variables associated to each vertex.
-                  Keys should be the names of the variable stored in each array.
-                  All 1D list-type object (list, tuple or numpy) must have the same number of elements.
+                     is defined by two points, then the length of the arrays should be equal to 2 * number of lines.
+                     So each consecutive pair of points is a line.
+            all_cell_data: A Dict of Dicts.  It has this format:
+                    all_cell_data[key] = cellData, where
+                    key = "scalars", "vectors", "normals", "tensors", or "tcoords", (not all are necessary) and
+                    cellData is a Dictionary of variables associated with the grid cells:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific cellData must have the same number of elements.
+            all_point_data: A Dict of Dicts.  It has this format:
+                    all_point_data[key] = pointData, where
+                    key = "scalars", "vectors", "normals", "tensors", or "tcoords", (not all are necessary) and
+                    pointData is a Dictionary of variables associated with the grid vertices:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific pointData must have the same number of elements.
             comments: list of comment strings, which will be added to the header section of the file.
                   
         RETURNS:
@@ -447,17 +571,25 @@ def linesToVTK(path, x, y, z, cellData = None, pointData = None, comments = None
     x = __convertListToArray(x)
     y = __convertListToArray(y)
     z = __convertListToArray(z)
-    cellData = __convertDictListToArrays(cellData)
-    pointData = __convertDictListToArrays(pointData)
+
+    if all_cell_data is not None:
+        ac_keys = sorted(list(all_cell_data.keys()))
+        for key in ac_keys:
+            all_cell_data[key] = __convertDictListToArrays(all_cell_data[key])
+
+    if all_point_data is not None:
+        ap_keys = sorted(list(all_point_data.keys()))
+        for key in ap_keys:
+            all_point_data[key] = __convertDictListToArrays(all_point_data[key])
     
     npoints = len(x)
     ncells = int(len(x) / 2.0)
     
-    # Check cellData has the same size that the number of cells
+    # Check all_cell_data has the same size that the number of cells
     
     # create some temporary arrays to write grid topology
-    offsets = np.arange(start = 2, step = 2, stop = npoints + 1, dtype = 'int32')   # index of last node in each cell
-    connectivity = np.arange(npoints, dtype = 'int32')                              # each point is only connected to itself
+    offsets = np.arange(start = 2, step = 2, stop = npoints + 1, dtype = 'int32') # index of last node in each cell
+    connectivity = np.arange(npoints, dtype = 'int32')                          # each point is only connected to itself
     cell_types = np.empty(npoints, dtype = 'uint8') 
    
     cell_types[:] = VtkLine.tid
@@ -476,20 +608,20 @@ def linesToVTK(path, x, y, z, cellData = None, pointData = None, comments = None
     w.addData("types", cell_types)
     w.closeElement("Cells")
     
-    _addDataToFile(w, cellData = cellData, pointData = pointData)
+    _addDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
 
     w.closePiece()
     w.closeGrid()
     w.appendData( (x,y,z) )
     w.appendData(connectivity).appendData(offsets).appendData(cell_types)
 
-    _appendDataToFile(w, cellData = cellData, pointData = pointData)
+    _appendDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
 
     w.save()
     return w.getFileName()
 
 # ==============================================================================
-def polyLinesToVTK(path, x, y, z, pointsPerLine, cellData = None, pointData = None, comments = None ):
+def polyLinesToVTK(path, x, y, z, pointsPerLine, all_cell_data = None, all_point_data = None, comments = None ):
     """
         Export line segments that joint 2 points and associated data.
 
@@ -498,15 +630,23 @@ def polyLinesToVTK(path, x, y, z, pointsPerLine, cellData = None, pointData = No
             x, y, z: 1D list-type object (list, tuple or numpy) arrays with coordinates of the vertices of the lines. It is assumed that each line.
                      has diffent number of points.
             pointsPerLine: 1D list-type object (list, tuple or numpy) array that defines the number of points associated to each line. Thus, 
-                           the length of this array define the number of lines. It also implicitly 
+                           the length of this array defines the number of lines. It also implicitly 
                            defines the connectivity or topology of the set of lines. It is assumed 
                            that points that define a line are consecutive in the x, y and z arrays.
-            cellData: Dictionary with variables associated to each line.
-                      Keys should be the names of the variable stored in each array.
-                      All 1D list-type object (list, tuple or numpy) must have the same number of elements.         
-            pointData: Dictionary with variables associated to each vertex.
-                       Keys should be the names of the variable stored in each array.
-                       1D list-type object (list, tuple or numpy) must have the same number of elements.
+            all_cell_data: A Dict of Dicts.  It has this format:
+                    all_cell_data[key] = cellData, where
+                    key = "scalars", "vectors", "normals", "tensors", or "tcoords", (not all are necessary) and
+                    cellData is a Dictionary of variables associated with the grid cells:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific cellData must have the same number of elements.
+            all_point_data: A Dict of Dicts.  It has this format:
+                    all_point_data[key] = pointData, where
+                    key = "scalars", "vectors", "normals", "tensors", or "tcoords", (not all are necessary) and
+                    pointData is a Dictionary of variables associated with the grid vertices:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific pointData must have the same number of elements.
             comments: list of comment strings, which will be added to the header section of the file.
             
         RETURNS:
@@ -518,8 +658,16 @@ def polyLinesToVTK(path, x, y, z, pointsPerLine, cellData = None, pointData = No
     x = __convertListToArray(x)
     y = __convertListToArray(y)
     z = __convertListToArray(z)
-    cellData = __convertDictListToArrays(cellData)
-    pointData = __convertDictListToArrays(pointData)
+    
+    if all_cell_data is not None:
+        ac_keys = sorted(list(all_cell_data.keys()))
+        for key in ac_keys:
+            all_cell_data[key] = __convertDictListToArrays(all_cell_data[key])
+
+    if all_point_data is not None:
+        ap_keys = sorted(list(all_point_data.keys()))
+        for key in ap_keys:
+            all_point_data[key] = __convertDictListToArrays(all_point_data[key])
     
     npoints = len(x)
     ncells = pointsPerLine.size
@@ -550,20 +698,19 @@ def polyLinesToVTK(path, x, y, z, pointsPerLine, cellData = None, pointData = No
     w.addData("types", cell_types)
     w.closeElement("Cells")
     
-    _addDataToFile(w, cellData = cellData, pointData = pointData)
+    _addDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
 
     w.closePiece()
     w.closeGrid()
     w.appendData( (x,y,z) )
     w.appendData(connectivity).appendData(offsets).appendData(cell_types)
 
-    _appendDataToFile(w, cellData = cellData, pointData = pointData)
+    _appendDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
 
     w.save()
     return w.getFileName()
 
-# ==============================================================================
-def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, cellData = None, pointData = None, comments = None ):
+def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, all_cell_data = None, all_point_data = None, comments = None ):
     """
         Export unstructured grid and associated data.
 
@@ -577,14 +724,22 @@ def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, cell
             offsets: 1D list-type object (list, tuple or numpy) with the index of the last vertex of each element in the connectivity array.
                      It should have length nelem, where nelem is the number of cells or elements in the grid.
             cell_types: 1D list-type object (list, tuple or numpy) with an integer that defines the cell type of each element in the grid.
-                        It should have size nelem. This should be assigned from evtk.vtk.VtkXXXX.tid, where XXXX represent
+                        It should have size nelem. This should be assigned from pyvtk.vtkbin.VtkXXXX.tid, where XXXX represents
                         the type of cell. Please check the VTK file format specification for allowed cell types.                       
-            cellData: Dictionary with variables associated to each line.
-                      Keys should be the names of the variable stored in each array.
-                      All 1D list-type object (list, tuple or numpy) must have the same number of elements.        
-            pointData: Dictionary with variables associated to each vertex.
-                       Keys should be the names of the variable stored in each array.
-                       All 1D list-type object (list, tuple or numpy) must have the same number of elements.
+            all_cell_data: A Dict of Dicts.  It has this format:
+                    all_cell_data[key] = cellData, where
+                    key = "scalars", "vectors", "normals", "tensors", or "tcoords", (not all are necessary) and
+                    cellData is a Dictionary of variables associated with the grid cells:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific cellData must have the same number of elements.
+            all_point_data: A Dict of Dicts.  It has this format:
+                    all_point_data[key] = pointData, where
+                    key = "scalars", "vectors", "normals", "tensors", or "tcoords", (not all are necessary) and
+                    pointData is a Dictionary of variables associated with the grid vertices:
+                        each key is the *name* of a variable stored in an array;
+                        the corresponding value is *the array*, i.e. a 1D list-type object (list, tuple or numpy).
+                        Note: all arrays (values) within a specific pointData must have the same number of elements.
             comments: list of comment strings, which will be added to the header section of the file.
             
         RETURNS:
@@ -598,8 +753,16 @@ def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, cell
     connectivity = __convertListToArray(connectivity)
     offsets = __convertListToArray(offsets)
     cell_types = __convertListToArray(cell_types)
-    cellData = __convertDictListToArrays(cellData)
-    pointData = __convertDictListToArrays(pointData)
+    
+    if all_cell_data is not None:
+        ac_keys = sorted(list(all_cell_data.keys()))
+        for key in ac_keys:
+            all_cell_data[key] = __convertDictListToArrays(all_cell_data[key])
+
+    if all_point_data is not None:
+        ap_keys = sorted(list(all_point_data.keys()))
+        for key in ap_keys:
+            all_point_data[key] = __convertDictListToArrays(all_point_data[key])
     
     npoints = x.size
     ncells = cell_types.size
@@ -619,22 +782,22 @@ def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, cell
     w.addData("types", cell_types)
     w.closeElement("Cells")
     
-    _addDataToFile(w, cellData = cellData, pointData = pointData)
-
+    _addDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
+    
     w.closePiece()
     w.closeGrid()
     w.appendData( (x,y,z) )
     w.appendData(connectivity).appendData(offsets).appendData(cell_types)
 
-    _appendDataToFile(w, cellData = cellData, pointData = pointData)
+    _appendDataToFile(w, all_cell_data = all_cell_data, all_point_data = all_point_data)
 
     w.save()
     return w.getFileName()
-    
+
 # ==============================================================================
 def cylinderToVTK(path, x0, y0, z0, z1, radius, nlayers, npilars = 16, cellData=None, pointData=None, comments = None ):
     """
-        Export cylinder as VTK unstructured grid.
+        Export cylinder as VTK unstructured grid.  SWW: needs to be updated!!!!
     
       PARAMETERS:
         path: path to file without extension.

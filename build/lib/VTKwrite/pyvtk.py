@@ -11,19 +11,19 @@ import sys
 try:
     import numpy as np
 except:
-    print("Numpy is not installed. Please install it before running EVTK again.")
+    print("Numpy is not installed. Please install it before running VTKwrite again.")
 
 # Map numpy dtype to struct format
 np_to_struct = { 'int8'    : 'b',
-                 'uint8'   : 'B',
-                 'int16'   : 'h',
-                 'uint16'  : 'H',
-                 'int32'   : 'i',
-                 'uint32'  : 'I',
-                 'int64'   : 'q',
-                 'uint64'  : 'Q',
-                 'float32' : 'f',
-                 'float64' : 'd' }
+               'uint8'   : 'B',
+               'int16'   : 'h',
+               'uint16'  : 'H',
+               'int32'   : 'i',
+               'uint32'  : 'I',
+               'int64'   : 'q',
+               'uint64'  : 'Q',
+               'float32' : 'f',
+               'float64' : 'd' }
               
 def _get_byte_order_char():
 # Check format in https://docs.python.org/3.5/library/struct.html
@@ -31,8 +31,6 @@ def _get_byte_order_char():
         return '<'
     else:
         return '>'
-
-
 
 # ================================
 #        write functions

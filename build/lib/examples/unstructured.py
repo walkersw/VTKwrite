@@ -1,35 +1,13 @@
-#! /usr/bin/env python
+"""
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Example of how to use the high level unstructuredGridToVTK function.
+This example shows how to export an unstructured grid given its vertices and
+topology through connectivity and offset lists.
+Check the VTK file format for details of the unstructured grid.
 
-######################################################################################
-# MIT License
-# 
-# Copyright (c) 2010-2021 Paulo A. Herrera
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-# 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-######################################################################################
+Copyright (c) 05-11-2021,  Shawn W. Walker
+"""
 
-# ************************************************************************
-# * Example of how to use the high level unstructuredGridToVTK function. *
-# * This example shows how to export a unstructured grid give its        *
-# * nodes and topology through a connectivity and offset lists.          *
-# * Check the VTK file format for details of the unstructured grid.      *
-# ************************************************************************
 import os
 from VTKwrite.interface import unstructuredGridToVTK
 from VTKwrite.vtkbin import VtkTriangle, VtkQuad
@@ -43,7 +21,7 @@ def clean():
         pass
         
 def run():
-    print("Running unstructured...")
+    print("running unstructured...")
 
     # Define vertices
     x = np.zeros(6)
@@ -76,14 +54,30 @@ def run():
     ctype[0], ctype[1] = VtkTriangle.tid, VtkTriangle.tid
     ctype[2] = VtkQuad.tid
     
-    cd = np.random.rand(3)
-    cellData = {"pressure" : cd}
+    # initialize the data structure
+    all_cell_data = {"scalars" : None, "vectors" : None}
+    # scalars
+    cellData_sc = {"pressure0" : np.random.rand(3)}
+    cellData_sc["pressure1"] = np.random.rand(3)
+    all_cell_data["scalars"] = cellData_sc
+    # vectors
+    cellData_vc = {"vel0" : np.random.rand(3*3)}
+    cellData_vc["vel1"] = np.random.rand(3*3)
+    all_cell_data["vectors"] = cellData_vc
     
-    pd = np.random.rand(6)
-    pointData = {"ec" : pd}
+    # initialize the data structure
+    all_point_data = {"scalars" : None, "vectors" : None}
+    # scalars
+    pointData_sc = {"potential0" : np.random.rand(6)}
+    pointData_sc["potential1"] = np.random.rand(6)
+    all_point_data["scalars"] = pointData_sc
+    # vectors
+    pointData_vc = {"flux0" : np.random.rand(6*3)}
+    pointData_vc["flux1"] = np.random.rand(6*3)
+    all_point_data["vectors"] = pointData_vc
     
     comments = [ "comment 1", "comment 2" ]
-    unstructuredGridToVTK(FILE_PATH, x, y, z, connectivity = conn, offsets = offset, cell_types = ctype, cellData = cellData, pointData = pointData, comments = comments)
+    unstructuredGridToVTK(FILE_PATH, x, y, z, connectivity = conn, offsets = offset, cell_types = ctype, all_cell_data = all_cell_data, all_point_data = all_point_data, comments = comments)
 
 if __name__ == "__main__":
     run()

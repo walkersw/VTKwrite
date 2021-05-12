@@ -358,6 +358,7 @@ class VtkFile:
         self.offset += nelem * ncomp * dtype.size + 8 # add 8 to indicate array size
         return self
 
+    # SWW: keep this for now...
     def addData(self, name, data):
         """ Adds array description to xml header section.
             
@@ -374,6 +375,23 @@ class VtkFile:
         elif type(data).__name__ == "ndarray":
             if data.ndim == 1 or data.ndim == 3:
                 self.addHeader(name, data.dtype.name, data.size, 1)
+            else:
+                assert False, "Bad array shape: " + str(data.shape)
+        else:
+            assert False, "Argument must be a Numpy array"
+
+    def internal_addData(self, name, data, ncomp):
+        """ Adds array description to xml header section.
+            
+             PARAMETERS:
+                name: data array name.
+                data: one numpy array (a 1D array).
+                ncomp: number of components to the data.
+        """
+        if type(data).__name__ == "ndarray":
+            if data.ndim == 1 or data.ndim == 3:
+                nelem = int(data.size / ncomp)
+                self.addHeader(name, data.dtype.name, nelem, ncomp)
             else:
                 assert False, "Bad array shape: " + str(data.shape)
         else:

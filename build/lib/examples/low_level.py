@@ -17,7 +17,7 @@ def clean():
         pass
         
 def run():
-    print("Running lowlevel...")
+    print("Running low_level...")
 
     nx, ny, nz = 6, 6, 2
     lx, ly, lz = 1.0, 1.0, 1.0

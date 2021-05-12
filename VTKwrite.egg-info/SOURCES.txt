@@ -15,7 +15,7 @@ pyvtk/../LICENSE
 pyvtk/../examples/group.py
 pyvtk/../examples/image.py
 pyvtk/../examples/lines.py
-pyvtk/../examples/lowlevel.py
+pyvtk/../examples/low_level.py
 pyvtk/../examples/points.py
 pyvtk/../examples/poly_lines.py
 pyvtk/../examples/rectilinear.py
