@@ -25,8 +25,8 @@ class VtkFileType:
     def __str__(self):
         return "Name: %s  Ext: %s \n" % (self.name, self.ext)
 
-VtkImageData        = VtkFileType("ImageData", ".vti")
-VtkPolyData         = VtkFileType("PolyData", ".vtp")
+VtkImageData       = VtkFileType("ImageData", ".vti")
+VtkPolyData        = VtkFileType("PolyData", ".vtp")
 VtkRectilinearGrid  = VtkFileType("RectilinearGrid", ".vtr")
 VtkStructuredGrid   = VtkFileType("StructuredGrid", ".vts")
 VtkUnstructuredGrid = VtkFileType("UnstructuredGrid", ".vtu")
@@ -54,15 +54,15 @@ VtkFloat64 = VtkDataType(8, "Float64")
 
 # Map numpy to VTK data types
 np_to_vtk = { 'int8'    : VtkInt8,
-              'uint8'   : VtkUInt8,
-              'int16'   : VtkInt16,
-              'uint16'  : VtkUInt16,
-              'int32'   : VtkInt32,
-              'uint32'  : VtkUInt32,
-              'int64'   : VtkInt64,
-              'uint64'  : VtkUInt64,
-              'float32' : VtkFloat32,
-              'float64' : VtkFloat64 }
+            'uint8'   : VtkUInt8,
+            'int16'   : VtkInt16,
+            'uint16'  : VtkUInt16,
+            'int32'   : VtkInt32,
+            'uint32'  : VtkUInt32,
+            'int64'   : VtkInt64,
+            'uint64'  : VtkUInt64,
+            'float32' : VtkFloat32,
+            'float64' : VtkFloat64 }
 
 #    CELL TYPES
 class VtkCellType:
@@ -288,7 +288,7 @@ class VtkFile:
         self.xml.closeElement(nodeType + "Data")
 
 
-    def openGrid(self, start = None, end = None, origin = None, spacing = None):
+    def openGrid(self, start = None, end = None, origin = None, spacing = None, time_values = None):
         """ Open grid section.
 
             PARAMETERS:
@@ -296,6 +296,7 @@ class VtkFile:
                 end: array or list of end indexes. Required for Structured, Rectilinear and ImageData grids.
                 origin: 3D array or list with grid origin. Only required for ImageData grids.
                 spacing: 3D array or list with grid spacing. Only required for ImageData grids.
+                time_values: single string giving the time values (with spaces in-between). Only required for Unstructured grids.
 
             RETURNS:
                 this VtkFile to allow chained calls.
@@ -312,7 +313,9 @@ class VtkFile:
         elif (gType == VtkStructuredGrid.name or gType == VtkRectilinearGrid.name):
             if (not start or not end): assert (False)
             ext = _mix_extents(start, end)
-            self.xml.addAttributes(WholeExtent = ext) 
+            self.xml.addAttributes(WholeExtent = ext)
+        elif (gType == VtkUnstructuredGrid.name and time_values != None):
+            self.xml.addAttributes(TimeValues = time_values)
                 
         return self
 
@@ -325,7 +328,7 @@ class VtkFile:
         self.xml.closeElement(self.ftype.name)
 
     
-    def addHeader(self, name, dtype, nelem, ncomp):
+    def addHeader(self, name, dtype, nelem, ncomp, time_value = None):
         """ Adds data array description to xml header section.
 
             PARAMETERS:
@@ -334,6 +337,7 @@ class VtkFile:
                        Format is the same as used by numpy, e.g. 'float64'.
                 nelem: number of elements in the array.
                 ncomp: number of components, 1 (=scalar) and 3 (=vector).
+                time_value: string representing time value.
 
             RETURNS:
                 This VtkFile to allow chained calls.
@@ -343,12 +347,20 @@ class VtkFile:
         """
         dtype = np_to_vtk[dtype]
 
-        self.xml.openElement( "DataArray")
-        self.xml.addAttributes( Name = name,
-                                NumberOfComponents = ncomp,
-                                type = dtype.name,
-                                format = "appended",
-                                offset = self.offset)
+        self.xml.openElement("DataArray")
+        if time_value is not None:
+            self.xml.addAttributes( Name = name,
+                                    NumberOfComponents = ncomp,
+                                    type = dtype.name,
+                                    format = "appended",
+                                    offset = self.offset,
+                                    TimeStep = time_value)
+        else:
+            self.xml.addAttributes( Name = name,
+                                    NumberOfComponents = ncomp,
+                                    type = dtype.name,
+                                    format = "appended",
+                                    offset = self.offset)
         self.xml.closeElement()
 
         #TODO: Check if 4/8 is platform independent
@@ -380,18 +392,19 @@ class VtkFile:
         else:
             assert False, "Argument must be a Numpy array"
 
-    def internal_addData(self, name, data, ncomp):
+    def internal_addData(self, name, data, ncomp, time_value = None):
         """ Adds array description to xml header section.
             
              PARAMETERS:
                 name: data array name.
                 data: one numpy array (a 1D array).
                 ncomp: number of components to the data.
+                time_value: string representing time value.
         """
         if type(data).__name__ == "ndarray":
             if data.ndim == 1 or data.ndim == 3:
                 nelem = int(data.size / ncomp)
-                self.addHeader(name, data.dtype.name, nelem, ncomp)
+                self.addHeader(name, data.dtype.name, nelem, ncomp, time_value)
             else:
                 assert False, "Bad array shape: " + str(data.shape)
         else:

@@ -34,11 +34,10 @@ def run():
     pressure = np.random.rand(npoints)
     temp = np.random.rand(npoints)
     
-    # initialize the data structure
-    all_point_data = {"scalars" : None, "vectors" : None}
-    # scalars
-    pointData_sc = {"1_temp" : temp, "2_pressure" : pressure}
-    all_point_data["scalars"] = pointData_sc
+    # data defined at points
+    all_point_data = []
+    all_point_data.append(["1_temp", "scalars", temp])
+    all_point_data.append(["2_pressure", "scalars", pressure])
 
     # keys are sorted before exporting, hence it is useful to prefix a number to determine an order
     comments = [ "comment 1", "comment 2" ]
@@ -46,19 +45,17 @@ def run():
 
     # Example 2: Export as TIN
     ndim = 2 #only consider x, y coordinates to create the triangulation
-    pointsToVTKAsTIN(FILE_PATH2, x, y, z, ndim = ndim, data = {"1_temp" : temp, "2_pressure" : pressure}, comments = comments)
+    pointsToVTKAsTIN(FILE_PATH2, x, y, z, ndim = ndim, data = all_point_data, comments = comments)
 
     # Example 3: Regular point set
     x = np.arange(1.0,10.0,0.1)
     y = np.arange(1.0,10.0,0.1)
     z = np.arange(1.0,10.0,0.1)
 
-    # initialize the data structure
+    # data defined at points
     del all_point_data
-    all_point_data = {"scalars" : None, "vectors" : None}
-    # scalars
-    pointData_sc = {"elev" : z}
-    all_point_data["scalars"] = pointData_sc
+    all_point_data = []
+    all_point_data.append(["elev", "scalars", z])
 
     comments = [ "comment 1", "comment 2" ]
     pointsToVTK(FILE_PATH3, x, y, z, all_point_data = all_point_data, comments = comments)
@@ -71,12 +68,11 @@ def run():
     pressure = [1.0, 2.0, 3.0, 4.0, 5.0]
     temp = [1.0, 2.0, 3.0, 4.0, 5.0]
 
-    # initialize the data structure
+    # data defined at points
     del all_point_data
-    all_point_data = {"scalars" : None, "vectors" : None}
-    # scalars
-    pointData_sc = {"1_temp" : temp, "2_pressure" : pressure}
-    all_point_data["scalars"] = pointData_sc
+    all_point_data = []
+    all_point_data.append(["1_temp", "scalars", temp])
+    all_point_data.append(["2_pressure", "scalars", pressure])
 
     # keys are sorted before exporting, hence it is useful to prefix a number to determine an order
     comments = [ "comment 1", "comment 2" ]

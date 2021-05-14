@@ -41,23 +41,15 @@ def run():
     x[2], y[2], z[2] = 0.0, 0.0, 0.0
     x[3], y[3], z[3] = -1.0, 1.0, 1.0
     
-    # initialize the data structure
-    all_cell_data = {"scalars" : None, "vectors" : None}
-    # scalars
-    cellData_sc = {"pressure" : pressure}
-    all_cell_data["scalars"] = cellData_sc
-    # vectors
-    cellData_vc = {"velocity" : vel}
-    all_cell_data["vectors"] = cellData_vc
-    
-    # initialize the data structure
-    all_point_data = {"scalars" : None, "vectors" : None}
-    # scalars
-    pointData_sc = {"temp" : temp}
-    all_point_data["scalars"] = pointData_sc
-    # vectors
-    pointData_vc = {"flux" : flux}
-    all_point_data["vectors"] = pointData_vc
+    # data defined on cells
+    all_cell_data = []
+    all_cell_data.append(["pressure", "scalars", pressure])
+    all_cell_data.append(["velocity", "vectors", vel])
+
+    # data defined at points
+    all_point_data = []
+    all_point_data.append(["temp", "scalars", temp])
+    all_point_data.append(["flux", "vectors", flux])
     
     comments = [ "comment 1", "comment 2" ]
     linesToVTK(FILE_PATH, x, y, z, all_cell_data = all_cell_data, all_point_data = all_point_data, comments = comments)

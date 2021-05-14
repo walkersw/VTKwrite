@@ -54,27 +54,19 @@ def run():
     ctype[0], ctype[1] = VtkTriangle.tid, VtkTriangle.tid
     ctype[2] = VtkQuad.tid
     
-    # initialize the data structure
-    all_cell_data = {"scalars" : None, "vectors" : None}
-    # scalars
-    cellData_sc = {"pressure0" : np.random.rand(3)}
-    cellData_sc["pressure1"] = np.random.rand(3)
-    all_cell_data["scalars"] = cellData_sc
-    # vectors
-    cellData_vc = {"vel0" : np.random.rand(3*3)}
-    cellData_vc["vel1"] = np.random.rand(3*3)
-    all_cell_data["vectors"] = cellData_vc
-    
-    # initialize the data structure
-    all_point_data = {"scalars" : None, "vectors" : None}
-    # scalars
-    pointData_sc = {"potential0" : np.random.rand(6)}
-    pointData_sc["potential1"] = np.random.rand(6)
-    all_point_data["scalars"] = pointData_sc
-    # vectors
-    pointData_vc = {"flux0" : np.random.rand(6*3)}
-    pointData_vc["flux1"] = np.random.rand(6*3)
-    all_point_data["vectors"] = pointData_vc
+    # data defined on cells
+    all_cell_data = []
+    all_cell_data.append(["pressure0", "scalars", np.random.rand(3)])
+    all_cell_data.append(["pressure1", "scalars", np.random.rand(3)])
+    all_cell_data.append(["vel0", "vectors", np.random.rand(3*3)])
+    all_cell_data.append(["vel1", "vectors", np.random.rand(3*3)])
+
+    # data defined at points
+    all_point_data = []
+    all_point_data.append(["potential0", "scalars", np.random.rand(6)])
+    all_point_data.append(["potential1", "scalars", np.random.rand(6)])
+    all_point_data.append(["flux0", "vectors", np.random.rand(6*3)])
+    all_point_data.append(["flux1", "vectors", np.random.rand(6*3)])
     
     comments = [ "comment 1", "comment 2" ]
     unstructuredGridToVTK(FILE_PATH, x, y, z, connectivity = conn, offsets = offset, cell_types = ctype, all_cell_data = all_cell_data, all_point_data = all_point_data, comments = comments)

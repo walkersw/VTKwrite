@@ -50,17 +50,13 @@ def run():
     pressure = np.random.rand(ncells).reshape( (nx, ny, nz))
     temp = np.random.rand(npoints).reshape( (nx + 1, ny + 1, nz + 1))
 
-    # initialize the data structure
-    all_cell_data = {"scalars" : None}
-    # scalars
-    cellData_sc = {"pressure" : pressure}
-    all_cell_data["scalars"] = cellData_sc
-    
-    # initialize the data structure
-    all_point_data = {"scalars" : None}
-    # scalars
-    pointData_sc = {"temp" : temp}
-    all_point_data["scalars"] = pointData_sc
+    # data defined on cells
+    all_cell_data = []
+    all_cell_data.append(["pressure", "scalars", pressure])
+
+    # data defined at points
+    all_point_data = []
+    all_point_data.append(["temp", "scalars", temp])
 
     comments = [ "comment 1", "comment 2" ]
     structuredToVTK(FILE_PATH, x, y, z, all_cell_data = all_cell_data, all_point_data = all_point_data, comments = comments)

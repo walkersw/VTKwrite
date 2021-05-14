@@ -8,6 +8,7 @@ import poly_lines
 import rectilinear 
 import structured 
 import unstructured 
+import unstructured_timedep 
 import low_level
 
 def testit(test):
@@ -25,6 +26,7 @@ def clean_all():
     rectilinear.clean()
     structured.clean()
     unstructured.clean()
+    unstructured_timedep.clean()
     low_level.clean()
     try:
         shutil.rmtree("__pycache__")
@@ -40,6 +42,7 @@ def test_all():
     testit(rectilinear.run)
     testit(structured.run)
     testit(unstructured.run)
+    testit(unstructured_timedep.run)
     testit(low_level.run)
 
 if __name__ == "__main__":

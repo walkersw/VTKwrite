@@ -48,18 +48,14 @@ def run():
     vel[0:3]  = [1.0, -1.0, 2.0]
     vel[3:6]  = [3.0, 4.0, -5.0]
 
-    # initialize the data structure
-    all_cell_data = {"scalars" : None, "vectors" : None}
-    # vectors
-    cellData_vc = {"vel" : vel}
-    all_cell_data["vectors"] = cellData_vc
-    
-    # initialize the data structure
-    all_point_data = {"scalars" : None, "vectors" : None}
-    # scalars
-    pointData_sc = {"temp" : temp}
-    pointData_sc["pressure"] = pressure
-    all_point_data["scalars"] = pointData_sc
+    # data defined on cells
+    all_cell_data = []
+    all_cell_data.append(["vel", "vectors", vel])
+
+    # data defined at points
+    all_point_data = []
+    all_point_data.append(["temp", "scalars", temp])
+    all_point_data.append(["pressure", "scalars", pressure])
 
     polyLinesToVTK(FILE_PATH, x, y, z, pointsPerLine = pointsPerLine, all_cell_data = all_cell_data, all_point_data = all_point_data)
 
