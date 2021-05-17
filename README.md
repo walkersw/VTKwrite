@@ -8,6 +8,20 @@ Python package to write VTK files in XML format
 
 https://github.com/paulo-herrera/PyEVTK
 
-- Installation is done in the standard way:  "python setup.py install"
+- Installation is done in the standard way:  ```python setup.py install```
 
 - You need Python 3.6 or better.
+
+## Usage
+
+After installing, go to the ./examples/ sub-directory and do this:
+```
+python runall.py run
+```
+to run the examples; you can also do
+```
+python runall.py clean
+```
+to delete the output.
+
+The individual Python files should give you enough information to use this package.
