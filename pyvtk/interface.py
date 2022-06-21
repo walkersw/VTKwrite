@@ -987,10 +987,18 @@ class timeseries_unstructuredGrid:
         offsets = self.__ts_convertListToArray(offsets)
         cell_types = self.__ts_convertListToArray(cell_types)
 
-        for ii in range(len(all_cell_data)):
+        if all_cell_data is not None:
+            len_all_cell_data = len(all_cell_data)
+        else:
+            len_all_cell_data = 0
+        for ii in range(len_all_cell_data):
             all_cell_data[ii][2] = self.__ts_convertListToArray(all_cell_data[ii][2])
 
-        for ii in range(len(all_point_data)):
+        if all_point_data is not None:
+            len_all_point_data = len(all_point_data)
+        else:
+            len_all_point_data = 0
+        for ii in range(len_all_point_data):
             all_point_data[ii][2] = self.__ts_convertListToArray(all_point_data[ii][2])
 
         npoints = x.size
