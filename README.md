@@ -12,6 +12,8 @@ https://github.com/paulo-herrera/PyEVTK
 
 - You need Python 3.6 or better.
 
+- Compatibility: the generated files can be read by Paraview versions: 5.4, 5.5, 5.6, 5.7.  Eventually, they can be read by Paraview version 5.10.11, because of a recent bug fix.
+
 ## Usage
 
 After installing, go to the ./examples/ sub-directory and do this:
