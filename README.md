@@ -14,6 +14,18 @@ https://github.com/paulo-herrera/PyEVTK
 
 - Compatibility: the generated files can be read by Paraview versions: 5.4, 5.5, 5.6, 5.7.  Eventually, they can be read by Paraview version 5.10.11, because of a recent bug fix.
 
+## Local Install Help
+
+If you need to make a "local" install (because you are not an administrator), then the install command will look like:
+
+```
+python3 setup.py install --prefix ~/.local
+```
+
+where you need to modify the ```~/.local``` text to reflect your system setup.
+
+Note: the command above will install it to this directory: ```~/.local/lib/python3.8/site-packages```
+
 ## Usage
 
 After installing, go to the ./examples/ sub-directory and do this:
