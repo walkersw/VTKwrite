@@ -19,12 +19,12 @@ https://github.com/paulo-herrera/PyEVTK
 If you need to make a "local" install (because you are not an administrator), then the install command will look like:
 
 ```
-python3 setup.py install --prefix ~/.local
+python setup.py install --prefix ~/.local
 ```
 
 where you need to modify the ```~/.local``` text to reflect your system setup.
 
-Note: the command above will install it to this directory: ```~/.local/lib/python3.8/site-packages```
+Note: the command above will install it to this directory: ```~/.local/lib/python3.x/site-packages```
 
 ## Usage
 
