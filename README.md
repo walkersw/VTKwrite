@@ -24,7 +24,7 @@ python setup.py install --prefix ~/.local
 
 where you need to modify the ```~/.local``` text to reflect your system setup.
 
-Note: the command above will install it to this directory: ```~/.local/lib/python3.x/site-packages```
+Note: the command above will install it to this directory: ```~/.local/lib/python3.x/site-packages/```
 
 ## Usage
 
