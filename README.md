@@ -12,7 +12,7 @@ https://github.com/paulo-herrera/PyEVTK
 
 - You need Python 3.6 or better.
 
-- Compatibility: the generated files can be read by Paraview versions: 5.4, 5.5, 5.6, 5.7.  Eventually, they can be read by Paraview version 5.10.11, because of a recent bug fix.
+- Compatibility: the generated files can be read by Paraview versions: 5.4, 5.5, 5.6, 5.7, AND 5.11.  I added a time-dependent .vtu file example to the unit tests of Paraview, so it should keep working in the future.
 
 ## Local Install Help
 
