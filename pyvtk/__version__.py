@@ -6,7 +6,7 @@ Information about the current version of the VTKwrite package.
 
 __title__ = 'VTKwrite-walkersw'
 __description__ = 'Python Class for writing VTK data in XML format with *raw* (binary) data'
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 __author__ = 'Shawn W. Walker'
 __author_email__ = 'walker@lsu.edu'
 __license__ = 'GNU GENERAL PUBLIC LICENSE'

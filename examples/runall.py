@@ -7,6 +7,7 @@ import points
 import poly_lines
 import rectilinear 
 import structured 
+import structured_ex1 
 import unstructured 
 import unstructured_timedep 
 import low_level
@@ -25,6 +26,7 @@ def clean_all():
     poly_lines.clean()
     rectilinear.clean()
     structured.clean()
+    structured_ex1.clean()
     unstructured.clean()
     unstructured_timedep.clean()
     low_level.clean()
@@ -41,6 +43,7 @@ def test_all():
     testit(poly_lines.run)
     testit(rectilinear.run)
     testit(structured.run)
+    testit(structured_ex1.run)
     testit(unstructured.run)
     testit(unstructured_timedep.run)
     testit(low_level.run)

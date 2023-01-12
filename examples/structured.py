@@ -16,7 +16,7 @@ def clean():
         os.remove(FILE_PATH + ".vts")
     except:
         pass
-        
+
 def run():
     print("Running structured...")
 

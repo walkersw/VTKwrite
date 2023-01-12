@@ -272,7 +272,7 @@ def structuredToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, 
                     all_cell_data[ii] = cellData, where
                     cellData is a List (of length 3) that defines a variable associated with the grid cells:
                         cellData[0] = the *name* of the variable stored;
-                        cellData[1] = the *type* of the variable, only "scalars" is allowed here.
+                        cellData[1] = the *type* of the variable, only "scalars" and "vectors" allowed here.
                         cellData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
                     Note: all data arrays inside "all_cell_data" must have the same number of elements (number of cells).
                     Note: the length of "all_cell_data" is the number of variables (defined on cells).
@@ -280,7 +280,7 @@ def structuredToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, 
                     all_point_data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
-                        pointData[1] = the *type* of the variable, only "scalars" is allowed here.
+                        pointData[1] = the *type* of the variable, only "scalars" and "vectors" allowed here.
                         pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
                     Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
                     Note: the length of "all_point_data" is the number of variables (defined on vertices).
@@ -301,12 +301,12 @@ def structuredToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, 
     if all_cell_data != None:
         for ii in range(len(all_cell_data)):
             cellData = all_cell_data[ii]
-            assert (cellData[1] == "scalars")
+            assert ( (cellData[1] == "scalars") or (cellData[1] == "vectors") )
 
     if all_point_data != None:
         for ii in range(len(all_point_data)):
             pointData = all_point_data[ii]
-            assert (pointData[1] == "scalars")
+            assert ( (pointData[1] == "scalars") or (pointData[1] == "vectors") )
 
     w =  VtkFile(path, ftype)
     if comments: w.addComments(comments)

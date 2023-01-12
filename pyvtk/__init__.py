@@ -3,7 +3,7 @@ VTKwrite
 ~~~~~~
 The VTKwrite package - a Python package for writing VTK data in XML format.
 
-Copyright (c) 05-07-2021,  Shawn W. Walker
+Copyright (c) 01-12-2023,  Shawn W. Walker
 """
 
 ######################################################################################
