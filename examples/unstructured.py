@@ -68,7 +68,7 @@ def run():
     all_point_data.append(["flux0", "vectors", np.random.rand(6*3)])
     all_point_data.append(["flux1", "vectors", np.random.rand(6*3)])
     
-    comments = [ "comment 1", "comment 2" ]
+    comments = ["comment 1", "comment 2"]
     unstructuredGridToVTK(FILE_PATH, x, y, z, connectivity = conn, offsets = offset, cell_types = ctype, all_cell_data = all_cell_data, all_point_data = all_point_data, comments = comments)
 
 if __name__ == "__main__":
