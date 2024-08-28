@@ -3,3 +3,8 @@
 build/
 dist/
 VTKwrite.egg-info/ 
+pyvtk/__pycache__/__init__.cpython-310.pyc
+pyvtk/__pycache__/interface.cpython-310.pyc
+pyvtk/__pycache__/vtkbin.cpython-310.pyc
+pyvtk/__pycache__/pyvtk.cpython-310.pyc
+pyvtk/__pycache__/xmlwrite.cpython-310.pyc
