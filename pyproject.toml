@@ -28,8 +28,9 @@ classifiers = [
 #packages = ["VTKwrite", "VTKwrite.pyvtk"]
 
 [tool.setuptools]
-packages = ["VTKwrite", "pyvtk"]
-package-dir = {"" = "pyvtk"}
+packages = ["VTKwrite"]
+#package-dir = {"pyvtk"}
+package-dir = {"" = "./pyvtk"}
 
 [project.urls]
 Homepage = "https://github.com/walkersw/VTKwrite"
