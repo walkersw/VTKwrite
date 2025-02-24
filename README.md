@@ -10,6 +10,8 @@ https://github.com/paulo-herrera/PyEVTK
 
 - Installation is done in the standard way:  ```python setup.py install```
 
+- Or if you want a development version: ```python -m pip install -e .```
+
 - You need Python 3.6 or better.
 
 - Compatibility: the generated files can be read by Paraview versions: 5.4, 5.5, 5.6, 5.7, AND 5.11.  I added a time-dependent .vtu file example to the unit tests of Paraview, so it should keep working in the future.

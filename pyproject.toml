@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "VTKwrite"
+version = "0.0.4"
+dependencies = [
+  "numpy",
+]
+requires-python = ">=3.6"
+authors = [
+  {name = "Shawn W. Walker", email = "walker@lsu.edu"},
+]
+maintainers = [
+  {name = "Shawn W. Walker", email = "walker@lsu.edu"}
+]
+description = "Python Class for writing VTK data in XML format with *raw* (binary) data"
+readme = "README.md"
+license = {file = "LICENSE"}
+keywords = ["mesh"]
+classifiers = [
+	"Programming Language :: Python :: 3",
+	"License :: OSI Approved :: GNU GENERAL PUBLIC LICENSE",
+	"Operating System :: OS Independent"
+]
+
+#packages = ["VTKwrite", "VTKwrite.pyvtk"]
+
+[tool.setuptools]
+packages = ["VTKwrite", "pyvtk"]
+package-dir = {"" = "pyvtk"}
+
+[project.urls]
+Homepage = "https://github.com/walkersw/VTKwrite"
+Documentation = "https://github.com/walkersw/VTKwrite"
+Repository = "https://github.com/walkersw/VTKwrite"
+"Bug Tracker" = "https://github.com/walkersw/VTKwrite"
