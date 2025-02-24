@@ -25,12 +25,9 @@ classifiers = [
 	"Operating System :: OS Independent"
 ]
 
-#packages = ["VTKwrite", "VTKwrite.pyvtk"]
-
 [tool.setuptools]
 packages = ["VTKwrite"]
-#package-dir = {"pyvtk"}
-package-dir = {"" = "./pyvtk"}
+package-dir = {"" = "src"}
 
 [project.urls]
 Homepage = "https://github.com/walkersw/VTKwrite"
