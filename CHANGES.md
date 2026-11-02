@@ -67,4 +67,9 @@ VTKHDF output:
   - Needs `h5py` (optional dependency: `pip install VTKwrite[hdf5]` or `pip install h5py`).
 - README: a fuller note on the VTK 9.6 / ParaView 6.1 single-file `.vtu` problem, and a table of the three time-series outputs.
 
+Examples:
+
+- `examples/group.py` now writes the step files that `group.pvd` lists (before, the .pvd pointed at files that did not exist). It shows when to use `VtkGroup`: a mesh that changes in time (here a stretching domain, re-meshed more finely at each step).
+- `tests/test_examples.py` checks that every file listed in a .pvd exists.
+
 Still open (see the review): API conveniences (e.g. (n, 3) arrays and dictionaries for the other writers, FEM cell types), and packaging metadata.

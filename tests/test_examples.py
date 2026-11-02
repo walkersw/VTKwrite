@@ -1,6 +1,7 @@
 """Every example runs and produces files that VTK can read."""
 import importlib.util
 import os
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -28,6 +29,12 @@ def test_example_runs(tmp_path, monkeypatch, vtk, name):
     for f in written:
         reader = readers[os.path.splitext(f)[1]]
         if reader is None:
+            # a .pvd collection: every file it lists must exist (paths are relative to it)
+            folder = os.path.dirname(str(tmp_path / f))
+            listed = [d.get("file") for d in ET.parse(str(tmp_path / f)).getroot().iter("DataSet")]
+            assert listed, f
+            missing = [g for g in listed if not os.path.isfile(os.path.join(folder, g))]
+            assert not missing, "%s lists missing files: %s" % (f, missing)
             continue
         r = reader()
         r.SetFileName(str(tmp_path / f))
