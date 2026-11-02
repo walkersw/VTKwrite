@@ -41,3 +41,15 @@ python runall.py clean
 to delete the output.
 
 The individual Python files should give you enough information to use this package.
+
+## Testing
+
+This test writes files and reads them back (with VTK's own readers where available):
+```
+python -m pip install pytest vtk
+python -m pytest tests
+```
+
+## Known issue: VTK 9.6 and later
+
+VTK 9.6 and later (including ParaView releases built on it) read only the first time step of a single-file time series written by `timeseries_unstructuredGrid`; later steps show wrong values. This is a bug in VTK's XML reader (reported upstream with a fix). Until a fixed VTK is released, use ParaView/VTK 9.5 or earlier for these files.

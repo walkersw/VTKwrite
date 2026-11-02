@@ -1,5 +1,5 @@
 """
-pyvtk.vtkbin.py
+VTKwrite.vtkbin.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Low level Python library to export data to binary VTK file.
 
@@ -8,6 +8,8 @@ Copyright (c) 05-07-2021,  Shawn W. Walker
 
 from .pyvtk import writeBlockSize, writeArrayToFile, writeArraysToFile
 from .xmlwrite import XmlWriter
+import numpy as np
+import numbers
 import sys
 import os
 
@@ -94,16 +96,34 @@ VtkQuadraticQuad = VtkCellType(23, "Quadratic_Quad")
 VtkQuadraticTetra = VtkCellType(24, "Quadratic_Tetra")
 VtkQuadraticHexahedron = VtkCellType(25, "Quadratic_Hexahedron")
 
+def _vtk_data_type(dtype_name):
+    """ Return the VtkDataType for a numpy dtype name, or raise TypeError. """
+    try:
+        return np_to_vtk[str(dtype_name)]
+    except KeyError:
+        raise TypeError("numpy dtype '%s' is not supported by VTK XML files; supported: %s"
+                        % (dtype_name, ", ".join(np_to_vtk))) from None
+
 # ==============================
 #       Helper functions
 # ==============================
 def _mix_extents(start, end):
-    assert (len(start) == len(end) == 3)
+    if len(start) != 3 or len(end) != 3:
+        raise ValueError("start and end must have 3 entries, got %r and %r" % (start, end))
     string = "%d %d %d %d %d %d" % (start[0], end[0], start[1], end[1], start[2], end[2])
     return string
 
+def _number_to_string(num):
+    """ Plain text for a number. repr() is not used directly because, since
+        NumPy 2, repr(np.float64(0.5)) is 'np.float64(0.5)', which VTK cannot parse. """
+    if isinstance(num, bool):
+        raise TypeError("expected a number, got a bool")
+    if isinstance(num, numbers.Integral):
+        return str(int(num))
+    return repr(float(num))
+
 def _array_to_string(a):
-    s = "".join([repr(num) + " " for num in a])
+    s = "".join([_number_to_string(num) + " " for num in a])
     return s
 
 def _get_byte_order():
@@ -129,11 +149,25 @@ class VtkGroup:
         self.xml.openElement("Collection")
         self.root = os.path.dirname(filepath)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            self.xml.abort()
+        elif not self.xml.closed:
+            self.save()
+        return False
+
     def save(self):
         """ Closes this VtkGroup. """
         self.xml.closeElement("Collection")
         self.xml.closeElement("VTKFile")
         self.xml.close()
+
+    def abort(self):
+        """ Discard this VtkGroup without writing it. """
+        self.xml.abort()
     
     def addFile(self, filepath, sim_time, group = "", part = "0"):
         """ Adds file to this VTK group.
@@ -184,13 +218,30 @@ class VtkFile:
                                                           byte_order = _get_byte_order(),
                                                           header_type = "UInt64")
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        """ On error, discard the partial file; otherwise save it (if not saved yet). """
+        if exc_type is not None:
+            self.abort()
+        elif not self.xml.closed:
+            self.save()
+        return False
+
+    def abort(self):
+        """ Discard the file being written. An existing file with the same name is kept. """
+        self.xml.abort()
+
     def addComments(self, comments):
         """ Insert strings stored in comments list as comments into the xml header section of the file. 
             This method does not make any check for forbidden or special characters in XML comments. 
             This method should be called right after creating the file to avoid including comments in the 
             wrong place within the header. BE AWARE!!!
+            Illegal sequences in comments ("--") are made safe automatically.
         """
-        assert not self.appendedDataIsOpen
+        if self.appendedDataIsOpen:
+            raise RuntimeError("comments must be added before the appended data section")
         for c in comments:
             self.xml.addComment(c)
         
@@ -224,24 +275,28 @@ class VtkFile:
         """
         # TODO: Check what are the requirements for each type of grid.
 
-        self.xml.openElement("Piece")
-        if (start and end):
+        if (start is not None and end is not None):
             ext = _mix_extents(start, end)
+            self.xml.openElement("Piece")
             self.xml.addAttributes( Extent = ext)
-        
-        elif (ncells and npoints):
-            self.xml.addAttributes(NumberOfPoints = npoints, NumberOfCells = ncells)
-       
-        elif npoints or nverts or nlines or nstrips or npolys:
-            if npoints is None: npoints = str(0)
-            if nverts is None: nverts = str(0)
-            if nlines is None: nlines = str(0)
-            if nstrips is None: nstrips = str(0)
-            if npolys is None: npolys = str(0)
-            self.xml.addAttributes(NumberOfPoints = npoints, NumberOfVerts = nverts,
-                                   NumberOfLines = nlines, NumberOfStrips = nstrips, NumberOfPolys = npolys)
+
+        elif (ncells is not None and npoints is not None):
+            self.xml.openElement("Piece")
+            self.xml.addAttributes(NumberOfPoints = int(npoints), NumberOfCells = int(ncells))
+
+        elif any(v is not None for v in (npoints, nverts, nlines, nstrips, npolys)):
+            if npoints is None: npoints = 0
+            if nverts is None: nverts = 0
+            if nlines is None: nlines = 0
+            if nstrips is None: nstrips = 0
+            if npolys is None: npolys = 0
+            self.xml.openElement("Piece")
+            self.xml.addAttributes(NumberOfPoints = int(npoints), NumberOfVerts = int(nverts),
+                                   NumberOfLines = int(nlines), NumberOfStrips = int(nstrips),
+                                   NumberOfPolys = int(npolys))
         else:
-            assert(False)
+            raise ValueError("openPiece needs start and end, or npoints and ncells, "
+                             "or npoints with nverts/nlines/nstrips/npolys")
 
         return self
 
@@ -263,16 +318,18 @@ class VtkFile:
                 this VtkFile to allow chained calls.
         """
         self.xml.openElement(nodeType + "Data")
+        # VTK matches these attribute names case-sensitively ("Scalars", not "scalars");
+        # with lowercase names the active scalars/vectors/... were silently not set.
         if scalars:
-            self.xml.addAttributes(scalars = scalars)
+            self.xml.addAttributes(Scalars = scalars)
         if vectors:
-            self.xml.addAttributes(vectors = vectors)
+            self.xml.addAttributes(Vectors = vectors)
         if normals:
-            self.xml.addAttributes(normals = normals)
+            self.xml.addAttributes(Normals = normals)
         if tensors:
-            self.xml.addAttributes(tensors = tensors)
+            self.xml.addAttributes(Tensors = tensors)
         if tcoords:
-            self.xml.addAttributes(tcoords = tcoords)
+            self.xml.addAttributes(TCoords = tcoords)
 
         return self
 
@@ -302,20 +359,28 @@ class VtkFile:
                 this VtkFile to allow chained calls.
         """
         gType = self.ftype.name
-        self.xml.openElement(gType)
         if (gType == VtkImageData.name):
-            if (not start or not end or not origin or not spacing): assert(False)
+            if (start is None or end is None or origin is None or spacing is None):
+                raise ValueError("ImageData needs start, end, origin and spacing")
+            if len(origin) != 3 or len(spacing) != 3:
+                raise ValueError("origin and spacing must have 3 entries, got %r and %r"
+                                 % (origin, spacing))
             ext = _mix_extents(start, end)
+            self.xml.openElement(gType)
             self.xml.addAttributes(WholeExtent = ext,
                                    Origin = _array_to_string(origin),
                                    Spacing = _array_to_string(spacing))
-        
+
         elif (gType == VtkStructuredGrid.name or gType == VtkRectilinearGrid.name):
-            if (not start or not end): assert (False)
+            if (start is None or end is None):
+                raise ValueError("%s needs start and end" % gType)
             ext = _mix_extents(start, end)
+            self.xml.openElement(gType)
             self.xml.addAttributes(WholeExtent = ext)
-        elif (gType == VtkUnstructuredGrid.name and time_values != None):
-            self.xml.addAttributes(TimeValues = time_values)
+        else:
+            self.xml.openElement(gType)
+            if (gType == VtkUnstructuredGrid.name and time_values is not None):
+                self.xml.addAttributes(TimeValues = time_values)
                 
         return self
 
@@ -345,7 +410,7 @@ class VtkFile:
             NOTE: This is a low level function. Use addData if you want
                   to add a numpy array.
         """
-        dtype = np_to_vtk[dtype]
+        dtype = _vtk_data_type(dtype)
 
         self.xml.openElement("DataArray")
         if time_value is not None:
@@ -380,17 +445,19 @@ class VtkFile:
                       arrays must represent the components of a vector field.
                       All arrays must be one dimensional or three-dimensional.
         """
-        if type(data).__name__ == "tuple": # vector data
-            assert (len(data) == 3)
+        if isinstance(data, tuple): # vector data
+            if len(data) != 3:
+                raise ValueError("vector data must be a tuple of 3 arrays, got %d" % len(data))
             x = data[0]
             self.addHeader(name, x.dtype.name, x.size, 3)
-        elif type(data).__name__ == "ndarray":
+        elif isinstance(data, np.ndarray):
             if data.ndim == 1 or data.ndim == 3:
                 self.addHeader(name, data.dtype.name, data.size, 1)
             else:
-                assert False, "Bad array shape: " + str(data.shape)
+                raise ValueError("Bad array shape for '%s': %s (must be 1-D or 3-D)"
+                                 % (name, data.shape))
         else:
-            assert False, "Argument must be a Numpy array"
+            raise TypeError("data for '%s' must be a numpy array or a tuple of 3 arrays" % name)
 
     def internal_addData(self, name, data, ncomp, time_value = None):
         """ Adds array description to xml header section.
@@ -401,14 +468,18 @@ class VtkFile:
                 ncomp: number of components to the data.
                 time_value: string representing time value.
         """
-        if type(data).__name__ == "ndarray":
+        if isinstance(data, np.ndarray):
             if data.ndim == 1 or data.ndim == 3:
-                nelem = int(data.size / ncomp)
+                if ncomp < 1 or data.size % ncomp != 0:
+                    raise ValueError("size of '%s' (%d) is not a multiple of its %d components"
+                                     % (name, data.size, ncomp))
+                nelem = data.size // ncomp
                 self.addHeader(name, data.dtype.name, nelem, ncomp, time_value)
             else:
-                assert False, "Bad array shape: " + str(data.shape)
+                raise ValueError("Bad array shape for '%s': %s (must be 1-D or 3-D)"
+                                 % (name, data.shape))
         else:
-            assert False, "Argument must be a Numpy array"
+            raise TypeError("data for '%s' must be a numpy array" % name)
 
     def appendHeader(self, dtype, nelem, ncomp):
         """ This function only writes the size of the data block that will be appended.
@@ -445,9 +516,10 @@ class VtkFile:
         """
         self.openAppendedData()
 
-        if type(data).__name__ == 'tuple': # 3 numpy arrays
+        if isinstance(data, tuple): # 3 numpy arrays
             ncomp = len(data)
-            assert (ncomp == 3)
+            if ncomp != 3:
+                raise ValueError("vector data must be a tuple of 3 arrays, got %d" % ncomp)
             dsize = data[0].dtype.itemsize
             nelem = data[0].size
             block_size = ncomp * nelem * dsize
@@ -458,7 +530,7 @@ class VtkFile:
             x, y, z = data[0], data[1], data[2]
             writeArraysToFile(self.xml.stream, x, y, z)
             
-        elif type(data).__name__ == 'ndarray' and (data.ndim == 1 or data.ndim == 3): # single numpy array
+        elif isinstance(data, np.ndarray) and (data.ndim == 1 or data.ndim == 3): # single numpy array
             ncomp = 1 
             dsize = data.dtype.itemsize
             nelem = data.size
@@ -468,9 +540,10 @@ class VtkFile:
             #else:
             #    writeBlockSize64Bit(self.xml.stream, block_size)
             writeArrayToFile(self.xml.stream, data)
-         
+
         else:
-            assert False
+            raise TypeError("appendData expects a 1-D or 3-D numpy array or a tuple of 3 arrays, "
+                            "got %s" % (getattr(data, "shape", type(data).__name__),))
 
         return self
 
