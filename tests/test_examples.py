@@ -18,8 +18,10 @@ def test_example_runs(tmp_path, monkeypatch, vtk, name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.run()
-    written = [f for f in os.listdir(tmp_path)]
-    assert written and not [f for f in written if f.endswith(".part")]
+    written = []
+    for folder, _, files in os.walk(tmp_path):                 # includes .pvd step folders
+        written += [os.path.relpath(os.path.join(folder, f), tmp_path) for f in files]
+    assert written and not [f for f in written if f.endswith((".part", ".steps"))]
     readers = {".vtu": vtk.vtkXMLUnstructuredGridReader, ".vts": vtk.vtkXMLStructuredGridReader,
                ".vtr": vtk.vtkXMLRectilinearGridReader, ".vti": vtk.vtkXMLImageDataReader,
                ".pvd": None}

@@ -42,6 +42,20 @@ to delete the output.
 
 The individual Python files should give you enough information to use this package.
 
+## Time-dependent data
+
+`TimeSeriesUnstructuredGrid` writes a simulation on a fixed unstructured mesh one time step at a time, so the whole history never has to be kept in memory:
+```python
+from VTKwrite.interface import TimeSeriesUnstructuredGrid
+
+with TimeSeriesUnstructuredGrid("out/sol", x, y, z, connectivity, offsets, cell_types,
+                                static_cell_data={"material": material}) as ts:
+    for t in times:
+        ...  # compute u (one value per point) and q (shape (npoints, 3))
+        ts.write_step(t, point_data={"u": u, "q": q})
+```
+By default everything goes into one file, `out/sol.vtu` (the mesh is stored once), plus `out/sol_time_values.vtu` with the actual time values. With `output="pvd"` it writes `out/sol.pvd` and one file per step in `out/sol/`; ParaView then shows the actual time values, and the steps written so far can be opened even if the run stops early. See `examples/unstructured_timeseries.py`.
+
 ## Testing
 
 This test writes files and reads them back (with VTK's own readers where available):
@@ -52,4 +66,4 @@ python -m pytest tests
 
 ## Known issue: VTK 9.6 and later
 
-VTK 9.6 and later (including ParaView releases built on it) read only the first time step of a single-file time series written by `timeseries_unstructuredGrid`; later steps show wrong values. This is a bug in VTK's XML reader (reported upstream with a fix). Until a fixed VTK is released, use ParaView/VTK 9.5 or earlier for these files.
+VTK 9.6 and later (including ParaView releases built on it) read only the first time step of a single-file time series (written by `TimeSeriesUnstructuredGrid` or `timeseries_unstructuredGrid`); later steps show wrong values. This is a bug in VTK's XML reader (reported upstream with a fix). Until a fixed VTK is released, use `output="pvd"`, or ParaView/VTK 9.5 or earlier for single-file time series.

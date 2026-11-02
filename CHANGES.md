@@ -45,4 +45,17 @@ Write speed (review section 5):
 - The output is byte-for-byte identical to before (checked on all examples, on 50 000-cell meshes with mixed dtypes, non-native byte order, C/Fortran-ordered and strided 3-D arrays, and in `tests/test_binary.py` against the original algorithm).
 - `polyLinesToVTK` computes offsets with `np.cumsum` instead of a Python loop.
 
-Still open (see the review): a streaming time-series interface, API conveniences, and packaging metadata.
+Streaming time series (review section 4):
+
+- New class `TimeSeriesUnstructuredGrid` (in `VTKwrite.interface`). It writes a simulation on a fixed unstructured mesh one step at a time: `write_step(t, point_data={...}, cell_data={...})`.
+  - Each step goes to disk as it is written, so the history does not have to be kept in memory.
+  - `output="vtu"` (default) writes everything into one .vtu file, as before: the mesh once, one array per field per step. It also writes the actual time values to `TimeValues` and to `<name>_time_values.vtu`. The time values do not have to be known in advance; if they are (`times=`), the data goes straight into the file, otherwise it is assembled when the series is closed.
+  - `output="pvd"` writes `<name>.pvd` and one .vtu per step in `<name>/`, with the actual time values. The .pvd is updated after every step, so a run that stops early can still be viewed. This also works with VTK/ParaView versions that have the time-series bug.
+  - Fields are dictionaries `{name: array}`. The type is inferred from the number of components (1: scalars, 3: vectors, 9: tensors), or given as `{name: (type, array)}`. Vectors may be arrays of shape (n, 3). Fields that do not change can be given once, as `static_point_data` / `static_cell_data`.
+  - Every step is checked against the first (same fields, sizes and types; dtypes converted when safe), and a failed check writes nothing. Can be used as a context manager: on an error, a single .vtu is discarded, while for .pvd the finished steps are kept.
+- The existing `timeseries_unstructuredGrid` class is unchanged and still works.
+- New example `examples/unstructured_timeseries.py` (both outputs, non-uniform time steps, a static cell field).
+- `VtkGroup` works when the .pvd path has no folder part (e.g. `VtkGroup("sol")`).
+- `VtkFile.addHeader` accepts an explicit `offset`.
+
+Still open (see the review): API conveniences (e.g. (n, 3) arrays and dictionaries for the other writers, FEM cell types), and packaging metadata.

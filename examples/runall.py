@@ -10,6 +10,7 @@ import structured
 import structured_ex1 
 import unstructured 
 import unstructured_timedep 
+import unstructured_timeseries
 import low_level
 
 def testit(test):
@@ -29,6 +30,7 @@ def clean_all():
     structured_ex1.clean()
     unstructured.clean()
     unstructured_timedep.clean()
+    unstructured_timeseries.clean()
     low_level.clean()
     try:
         shutil.rmtree("__pycache__")
@@ -46,6 +48,7 @@ def test_all():
     testit(structured_ex1.run)
     testit(unstructured.run)
     testit(unstructured_timedep.run)
+    testit(unstructured_timeseries.run)
     testit(low_level.run)
 
 if __name__ == "__main__":

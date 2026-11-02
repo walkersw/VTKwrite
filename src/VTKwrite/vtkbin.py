@@ -147,7 +147,8 @@ class VtkGroup:
         self.xml.openElement("VTKFile")
         self.xml.addAttributes(type = "Collection", version = "0.1",  byte_order = _get_byte_order())
         self.xml.openElement("Collection")
-        self.root = os.path.dirname(filepath)
+        # folder of the .pvd file; the paths of the data files are stored relative to it
+        self.root = os.path.dirname(os.path.abspath(filepath))
 
     def __enter__(self):
         return self
@@ -393,7 +394,7 @@ class VtkFile:
         self.xml.closeElement(self.ftype.name)
 
     
-    def addHeader(self, name, dtype, nelem, ncomp, time_value = None):
+    def addHeader(self, name, dtype, nelem, ncomp, time_value = None, offset = None):
         """ Adds data array description to xml header section.
 
             PARAMETERS:
@@ -403,6 +404,10 @@ class VtkFile:
                 nelem: number of elements in the array.
                 ncomp: number of components, 1 (=scalar) and 3 (=vector).
                 time_value: string representing time value.
+                offset: byte offset of the block in the appended data section.  By default,
+                        blocks are assumed to be appended in the order of their headers;
+                        give the offset explicitly when they are not (it is then not
+                        added to the running offset).
 
             RETURNS:
                 This VtkFile to allow chained calls.
@@ -411,6 +416,9 @@ class VtkFile:
                   to add a numpy array.
         """
         dtype = _vtk_data_type(dtype)
+        explicit_offset = offset is not None
+        if not explicit_offset:
+            offset = self.offset
 
         self.xml.openElement("DataArray")
         if time_value is not None:
@@ -418,15 +426,17 @@ class VtkFile:
                                     NumberOfComponents = ncomp,
                                     type = dtype.name,
                                     format = "appended",
-                                    offset = self.offset,
+                                    offset = offset,
                                     TimeStep = time_value)
         else:
             self.xml.addAttributes( Name = name,
                                     NumberOfComponents = ncomp,
                                     type = dtype.name,
                                     format = "appended",
-                                    offset = self.offset)
+                                    offset = offset)
         self.xml.closeElement()
+        if explicit_offset:
+            return self
 
         #TODO: Check if 4/8 is platform independent
         #if self.largeFile == False:

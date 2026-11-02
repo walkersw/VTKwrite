@@ -13,7 +13,10 @@ Copyright (c) 05-07-2021,  Shawn W. Walker
 from .vtkbin import * # VtkFile, VtkUnstructuredGrid, etc.
 from .vtkbin import _vtk_data_type, _number_to_string
 from .xmlwrite import sanitize_comment, XmlWriter
+from .pyvtk import writeBlockSize, writeArrayToFile
 import os
+import shutil
+import uuid
 try:
     import numpy as np
 except:
@@ -255,6 +258,64 @@ def _write_unstructured(path, x, y, z, connectivity, offsets, cell_types,
 
         _appendDataToFile(w, all_cell_data = cell_fields, all_point_data = point_fields)
     return w.getFileName()
+
+def _write_time_values_grid(filepath, time_values, associated_file):
+    """ Write filepath + '.vtu': a one-line "fake" grid whose cell array "TimeValue"
+        holds the actual time value of each time step (see write_fake_grid_for_time). """
+    full_file = filepath + '.vtu'
+    _write_text_atomically(full_file, _time_values_grid_text(time_values, associated_file))
+    return full_file
+
+def _time_values_grid_text(time_values, associated_file):
+    """ Content of the "fake" grid file written by _write_time_values_grid. """
+    time_file = _TextBuffer()
+    time_file.write('<?xml version="1.0"?>\n')
+    time_file.write('<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">\n')
+    time_file.write('<!-- This is a fake grid, that is only used for plotting actual Time Values -->\n')
+    Comment_str_2 = '<!-- ' + sanitize_comment('See the associated file: ' + associated_file) + ' -->\n'
+    time_file.write(Comment_str_2)
+    time_file.write('<!-- This .vtu file can be included in the Paraview pipeline. -->\n')
+    time_file.write('<!-- Then use a Python Annotation Filter with this Expression: "Time: %1.2f" %TimeValue[0] -->\n')
+    time_file.write('<!-- Make sure the "Array Association" is set to "Cell Data" -->\n')
+    time_file.write('<!-- This is useful when the time step spacing is not uniform. -->\n')
+    time_file.write('<!-- Note: make sure to hide the fake grid. -->\n')
+
+    num_time_indices = len(time_values)
+    time_indices = np.arange(num_time_indices)
+    time_ind_str = ' '.join(map(str, time_indices))
+
+    UG_TV_str = '<UnstructuredGrid TimeValues="' + time_ind_str + '">\n'
+    time_file.write(UG_TV_str)
+    time_file.write('<Piece NumberOfPoints="2" NumberOfCells="1">\n')
+    time_file.write('<Points>\n')
+    time_file.write('<DataArray type="Float32" NumberOfComponents="3" format="ascii">\n')
+    time_file.write('0 0 0\n')
+    time_file.write('1 0 0\n')
+    time_file.write('</DataArray>\n')
+    time_file.write('</Points>\n')
+    time_file.write('<Cells>\n')
+    time_file.write('<DataArray type="Int32" Name="connectivity" format="ascii">\n')
+    time_file.write('0 1\n')
+    time_file.write('</DataArray>\n')
+    time_file.write('<DataArray type="Int32" Name="offsets" format="ascii">\n')
+    time_file.write('2\n')
+    time_file.write('</DataArray>\n')
+    time_file.write('<DataArray type="UInt8" Name="types" format="ascii">\n')
+    time_file.write('3\n')
+    time_file.write('</DataArray>\n')
+    time_file.write('</Cells>\n')
+    time_file.write('<CellData Scalars="TimeValue">\n')
+
+    for ii in range(num_time_indices):
+        TV_ii_str = '<DataArray Name="TimeValue" NumberOfComponents="1" type="Float64" format="ascii" TimeStep="' + \
+                               str(ii) + '">' + _number_to_string(float(time_values[ii])) + '</DataArray>\n'
+        time_file.write(TV_ii_str)
+
+    time_file.write('</CellData>\n')
+    time_file.write('</Piece>\n')
+    time_file.write('</UnstructuredGrid>\n')
+    time_file.write('</VTKFile>\n')
+    return time_file.getvalue()
 
 # =================================
 #       High level functions
@@ -1029,8 +1090,9 @@ class timeseries_unstructuredGrid:
         Variables must be appended in the order given to init_unstructuredGridToVTK:
         first all cell data, then all point data.  Each call must provide one array per
         time value, each with the same number of values as the array given at
-        initialization.  Arrays of a different dtype are converted when this is lossless
-        (e.g. float32 -> float64); otherwise a TypeError is raised.  Nothing is written
+        initialization.  Arrays of a different dtype are converted when NumPy's "safe"
+        casting rules allow it (e.g. float32 -> float64, int -> float64); otherwise a
+        TypeError is raised.  Nothing is written
         if a check fails.
         """
         if not self.VtkFile_obj:
@@ -1107,54 +1169,460 @@ class timeseries_unstructuredGrid:
             Full path to saved file.
         """
 
-        full_file = filepath + '.vtu'
-        time_file = _TextBuffer()
-        time_file.write('<?xml version="1.0"?>\n')
-        time_file.write('<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">\n')
-        time_file.write('<!-- This is a fake grid, that is only used for plotting actual Time Values -->\n')
-        Comment_str_2 = '<!-- ' + sanitize_comment('See the associated file: ' + self.filename + self.ftype.ext) + ' -->\n'
-        time_file.write(Comment_str_2)
-        time_file.write('<!-- This .vtu file can be included in the Paraview pipeline. -->\n')
-        time_file.write('<!-- Then use a Python Annotation Filter with this Expression: "Time: %1.2f" %TimeValue[0] -->\n')
-        time_file.write('<!-- Make sure the "Array Association" is set to "Cell Data" -->\n')
-        time_file.write('<!-- This is useful when the time step spacing is not uniform. -->\n')
-        time_file.write('<!-- Note: make sure to hide the fake grid. -->\n')
+        return _write_time_values_grid(filepath, self.time_values, self.filename + self.ftype.ext)
 
-        num_time_indices = len(self.time_values)
-        time_indices = np.arange(num_time_indices)
-        time_ind_str = ' '.join(map(str, time_indices))
+# =================================
+#  Streaming time series: one .vtu file, or a .pvd file with one .vtu per step
+# =================================
+_INFERRED_TYPE = {1 : "scalars", 3 : "vectors", 9 : "tensors"}
 
-        UG_TV_str = '<UnstructuredGrid TimeValues="' + time_ind_str + '">\n'
-        time_file.write(UG_TV_str)
-        time_file.write('<Piece NumberOfPoints="2" NumberOfCells="1">\n')
-        time_file.write('<Points>\n')
-        time_file.write('<DataArray type="Float32" NumberOfComponents="3" format="ascii">\n')
-        time_file.write('0 0 0\n')
-        time_file.write('1 0 0\n')
-        time_file.write('</DataArray>\n')
-        time_file.write('</Points>\n')
-        time_file.write('<Cells>\n')
-        time_file.write('<DataArray type="Int32" Name="connectivity" format="ascii">\n')
-        time_file.write('0 1\n')
-        time_file.write('</DataArray>\n')
-        time_file.write('<DataArray type="Int32" Name="offsets" format="ascii">\n')
-        time_file.write('2\n')
-        time_file.write('</DataArray>\n')
-        time_file.write('<DataArray type="UInt8" Name="types" format="ascii">\n')
-        time_file.write('3\n')
-        time_file.write('</DataArray>\n')
-        time_file.write('</Cells>\n')
-        time_file.write('<CellData Scalars="TimeValue">\n')
+def _step_field(where, name, value, ntuples):
+    """ Check one field given as an array, or as (type, array).  A 2-D array with one
+        row per point/cell, e.g. shape (n, 3), is accepted for multi-component data.
+        Returns [name, type, flat array, ncomp] (the format used by _check_fields). """
+    if not isinstance(name, str) or not name:
+        raise TypeError("%s: field names must be non-empty strings, got %r" % (where, name))
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+        dtype_str, data = value
+    else:
+        dtype_str, data = None, value
+    if isinstance(data, (list, tuple)) and data and isinstance(data[0], (np.ndarray, list, tuple)):
+        raise TypeError("%s['%s']: give multi-component data as one array with one row per "
+                        "point/cell, e.g. np.column_stack((vx, vy, vz)), not as a %s of arrays"
+                        % (where, name, type(data).__name__))
+    arr = _to_array("%s['%s']" % (where, name), data)
+    if arr.ndim == 2 and arr.shape[0] == ntuples:
+        arr = np.ascontiguousarray(arr).reshape(-1)     # rows are tuples: x0 y0 z0 x1 ...
+    elif arr.ndim != 1:
+        raise ValueError("%s['%s'] must be 1-D, or 2-D with one row per %s; got shape %s"
+                         % (where, name, "cell" if "cell" in where else "point", arr.shape))
+    if dtype_str is None:
+        ncomp = arr.size // ntuples if ntuples else 1
+        if ntuples and arr.size % ntuples:
+            raise ValueError("%s['%s'] has %d values, which is not a multiple of %d %s"
+                             % (where, name, arr.size, ntuples,
+                                "cells" if "cell" in where else "points"))
+        dtype_str = _INFERRED_TYPE.get(ncomp)
+        if dtype_str is None:
+            raise ValueError("%s['%s'] has %d components per tuple; give the type explicitly, "
+                             "e.g. ('tcoords', array), or pad 2-D vectors to 3 components"
+                             % (where, name, ncomp))
+    return _check_fields([[name, dtype_str, arr]], where, ntuples)[0]
 
-        for ii in range(num_time_indices):
-            TV_ii_str = '<DataArray Name="TimeValue" NumberOfComponents="1" type="Float64" format="ascii" TimeStep="' + \
-                                   str(ii) + '">' + _number_to_string(float(self.time_values[ii])) + '</DataArray>\n'
-            time_file.write(TV_ii_str)
+def _block_size(arr):
+    """ Bytes taken by an array in the appended section (8-byte size header + data). """
+    return 8 + arr.size * arr.dtype.itemsize
 
-        time_file.write('</CellData>\n')
-        time_file.write('</Piece>\n')
-        time_file.write('</UnstructuredGrid>\n')
-        time_file.write('</VTKFile>\n')
-        _write_text_atomically(full_file, time_file.getvalue())
 
-        return full_file
+class TimeSeriesUnstructuredGrid:
+    """
+    Write a time-dependent simulation on a fixed unstructured grid, one time step at a time.
+
+    Two kinds of output:
+
+    * output = "vtu" (default): everything in ONE .vtu file.  The mesh is stored once, and
+      every time step is stored as a separate DataArray tagged with its TimeStep.  Each
+      step is written to disk as soon as write_step() is called, so the whole history never
+      has to be kept in memory.  If the time values are known in advance (argument
+      "times"), the data goes straight into the file; otherwise it is collected in a
+      temporary file next to the target and assembled when close() is called.
+      ParaView/VTK use the step index (0, 1, 2, ...) as "time" for such files; the actual
+      time values are written to TimeValues and, if time_values_file is set, to a small
+      companion file (see timeseries_unstructuredGrid.write_fake_grid_for_time).
+      The .vtu only exists once close() has succeeded.
+      NOTE: VTK 9.6 and later (e.g. ParaView 6.1) have a bug that reads only the first
+      time step of such files; use output = "pvd" for those versions.
+
+    * output = "pvd": a ParaView collection.  Each step is a complete .vtu file in the
+      folder <path>/, named <name>_00000.vtu, <name>_00001.vtu, ..., and <path>.pvd lists
+      them with their actual time values.  The .pvd is updated after every step, so the
+      steps written so far can be opened even if the simulation stops early.  Works in
+      all ParaView versions; the cost is that the mesh is stored in every step file.
+
+    Fields are given to write_step() as dictionaries {name: array}.  The type is inferred
+    from the number of components (1: scalars, 3: vectors, 9: tensors); give
+    {name: (type, array)} to choose another type (e.g. "normals", or "tcoords" with 1-3
+    components).  Multi-component data may be interleaved 1-D arrays (x0 y0 z0 x1 ...)
+    or 2-D arrays with one row per point/cell, e.g. shape (npoints, 3).  The first
+    step fixes the set of fields, their types and dtypes; later steps must give the same
+    fields (arrays are converted to the first step's dtype when NumPy's "safe" casting
+    rules allow it, e.g. float32 -> float64).
+    Fields that do not change in time can be given once, as static_point_data /
+    static_cell_data.
+
+    Example:
+
+        with TimeSeriesUnstructuredGrid("out/sol", x, y, z, conn, offsets, types,
+                                        static_cell_data={"material": mat}) as ts:
+            for t in times:
+                ...  # compute u (one value per point) and q (shape (npoints, 3))
+                ts.write_step(t, point_data={"u": u, "q": q})
+        # -> out/sol.vtu (and out/sol_time_values.vtu)
+
+    PARAMETERS:
+        path: file name without extension.
+        x, y, z, connectivity, offsets, cell_types: the mesh, as in unstructuredGridToVTK.
+        times: the time values (strictly increasing), if known in advance.  Then exactly
+               this many steps must be written, and write_step(time) may omit the time.
+        output: "vtu" (one file) or "pvd" (one file per step plus a .pvd).
+        static_point_data, static_cell_data: dictionaries {name: array} of data that do
+               not depend on time; written once.
+        comments: list of comment strings for the file header(s).
+        time_values_file: for output = "vtu": True to also write
+               <path>_time_values.vtu (the "fake grid" holding the time values), False for
+               no such file, or a file name without extension.
+    """
+
+    def __init__(self, path, x, y, z, connectivity, offsets, cell_types, times = None,
+                 output = "vtu", static_point_data = None, static_cell_data = None,
+                 comments = None, time_values_file = True):
+        if output not in ("vtu", "pvd"):
+            raise ValueError("output must be 'vtu' or 'pvd', got %r" % (output,))
+        self.path = str(path)
+        self.output = output
+        x, y, z = _check_xyz(x, y, z)
+        connectivity, offsets, cell_types = _check_topology(connectivity, offsets, cell_types,
+                                                            x.size)
+        self._mesh = (x, y, z, connectivity, offsets, cell_types)
+        self._npoints, self._ncells = x.size, offsets.size
+        self._static = {"point" : self._fields(static_point_data, "static_point_data", "point"),
+                        "cell" : self._fields(static_cell_data, "static_cell_data", "cell")}
+        self._comments = _check_comments(comments)
+        self._time_values_file = time_values_file
+
+        if times is not None:
+            times = _to_vector("times", times).astype(float)
+            if times.size == 0:
+                raise ValueError("times must contain at least one time value")
+            if not np.all(np.isfinite(times)):
+                raise ValueError("times must be finite numbers")
+            if np.any(np.diff(times) <= 0):
+                raise ValueError("times must be strictly increasing")
+        if output == "vtu" and isinstance(time_values_file, str):
+            tv_dir = os.path.dirname(os.path.abspath(time_values_file))
+            if not os.path.isdir(tv_dir):
+                raise ValueError("folder for time_values_file does not exist: %s" % tv_dir)
+        self._planned_times = times
+        self._times = []            # time values of the steps written so far
+        self._pvd_files = []        # output = "pvd": (step file, time) of the steps written
+        self._result = None         # path returned by close()
+        self._layout = None         # {"point": [(name, type, dtype, size, ncomp)], "cell": [...]}
+        self._vtk = None            # output = "vtu": the VtkFile being written
+        self._scratch = None        # output = "vtu", times unknown: step data until close()
+        self._scratch_path = None
+        self._stream = None         # where step data is appended
+        self._closed = False
+
+    # ---------- context manager ----------
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            self.abort()
+        elif not self._closed:
+            self.close()
+        return False
+
+    def __del__(self):
+        if not getattr(self, "_closed", True):
+            try:
+                self.abort()
+            except Exception:
+                pass
+
+    # ---------- public methods ----------
+    @property
+    def nsteps(self):
+        """ Number of time steps written so far. """
+        return len(self._times)
+
+    def write_step(self, time = None, point_data = None, cell_data = None):
+        """
+        Write one time step.
+
+        PARAMETERS:
+            time: the time value of this step.  May be omitted if "times" was given to
+                  the constructor (if given, it must match).
+            point_data: dictionary {name: array} of data at the points.
+            cell_data: dictionary {name: array} of data on the cells.
+
+        RETURNS:
+            The index of this step (0, 1, 2, ...).
+
+        Nothing is written if a check fails.
+        """
+        if self._closed:
+            raise RuntimeError("this time series has been closed")
+        k = len(self._times)
+        if self._planned_times is not None:
+            if k >= self._planned_times.size:
+                raise ValueError("all %d time steps given in 'times' have already been written"
+                                 % self._planned_times.size)
+            t = float(self._planned_times[k])
+            if time is not None and not np.isclose(float(time), t, rtol = 1e-9, atol = 1e-12):
+                raise ValueError("time %r does not match times[%d] = %r" % (time, k, t))
+        else:
+            if time is None:
+                raise ValueError("write_step needs the time value (no 'times' were given)")
+            t = float(time)
+            if not np.isfinite(t):
+                raise ValueError("time must be a finite number, got %r" % (time,))
+            if self._times and t <= self._times[-1]:
+                raise ValueError("time values must increase: %r after %r" % (t, self._times[-1]))
+
+        fields = {"point" : self._fields(point_data, "point_data", "point"),
+                  "cell" : self._fields(cell_data, "cell_data", "cell")}
+        if self._layout is None:
+            self._check_names(fields)
+            layout = {assoc : [(f[0], f[1], f[2].dtype, f[2].size, f[3]) for f in fields[assoc]]
+                      for assoc in ("point", "cell")}
+        else:
+            layout = self._layout
+            fields = {assoc : self._match_layout(assoc, fields[assoc]) for assoc in fields}
+
+        if self.output == "vtu":
+            if self._layout is None:
+                self._layout = layout
+                try:
+                    self._start_vtu()
+                except BaseException:
+                    # e.g. the folder does not exist: nothing was written, a retry may work
+                    self._layout = None
+                    if self._vtk is not None:
+                        self._vtk.abort()
+                        self._vtk = None
+                    self._remove_scratch()
+                    self._stream = None
+                    raise
+            try:
+                for assoc in ("point", "cell"):
+                    for f in fields[assoc]:
+                        writeBlockSize(self._stream, f[2].size * f[2].dtype.itemsize)
+                        writeArrayToFile(self._stream, f[2])
+            except BaseException:
+                # a partly written step cannot be undone: discard the output
+                self.abort()
+                raise
+        else:
+            self._layout = layout
+            self._write_pvd_step(k, t, fields)
+        self._times.append(t)
+        return k
+
+    def close(self):
+        """
+        Finish the output.
+
+        RETURNS:
+            Full path of the .vtu file (output = "vtu") or of the .pvd file (output = "pvd").
+        """
+        if self._closed:
+            if self._result is not None:
+                return self._result
+            raise RuntimeError("this time series was aborted; nothing more can be saved")
+        nsteps = len(self._times)
+        if nsteps == 0:
+            self.abort()
+            raise ValueError("no time steps were written; nothing was saved")
+        if self._planned_times is not None and nsteps != self._planned_times.size:
+            missing = self._planned_times.size - nsteps
+            if self.output == "vtu":
+                self.abort()
+                raise ValueError("only %d of the %d time steps in 'times' were written; "
+                                 "the file was discarded" % (nsteps, self._planned_times.size))
+            self._closed = True
+            raise ValueError("only %d of the %d time steps in 'times' were written (%d missing); "
+                             "the .pvd lists the steps that were written"
+                             % (nsteps, self._planned_times.size, missing))
+        if self.output == "pvd":
+            self._closed = True
+            self._result = os.path.abspath(self.path + ".pvd")
+            return self._result
+
+        tv_writer = None
+        try:
+            if self._scratch is not None:
+                # times were not known in advance: header now, then the collected step data
+                self._open_vtu(self._times)
+                self._scratch.flush()
+                self._scratch.seek(0)
+                shutil.copyfileobj(self._scratch, self._vtk.xml.stream, 16 * 2**20)
+                self._remove_scratch()
+            filename = self._vtk.getFileName()
+            if self._time_values_file:
+                # written to a temporary file first, so that a failure here leaves no .vtu
+                tv_path = (self.path + "_time_values" if self._time_values_file is True
+                           else str(self._time_values_file))
+                tv_writer = XmlWriter(tv_path + ".vtu", addDeclaration = False)
+                tv_writer.addText(_time_values_grid_text(self._times, os.path.basename(filename)))
+            self._vtk.save()
+            if tv_writer is not None:
+                tv_writer.close()
+        except BaseException:
+            if tv_writer is not None:
+                tv_writer.abort()
+            self.abort()
+            raise
+        self._closed = True
+        self._result = filename
+        return filename
+
+    def abort(self):
+        """ Stop without saving.  For output = "vtu" nothing is written; for output = "pvd"
+            the steps written so far (and the .pvd listing them) are kept. """
+        self._closed = True
+        if self._vtk is not None:
+            self._vtk.abort()
+        self._remove_scratch()
+
+    # ---------- helpers ----------
+    def _fields(self, data, where, assoc):
+        if data is None:
+            return []
+        if not isinstance(data, dict):
+            raise TypeError("%s must be a dictionary {name: array}" % where)
+        n = self._npoints if assoc == "point" else self._ncells
+        return [_step_field(where, name, value, n) for name, value in data.items()]
+
+    def _check_names(self, fields):
+        for assoc in ("point", "cell"):
+            static = {f[0] for f in self._static[assoc]}
+            clash = static & {f[0] for f in fields[assoc]}
+            if clash:
+                raise ValueError("%s data name(s) used both as static and time-dependent data: %s"
+                                 % (assoc, ", ".join(sorted(clash))))
+
+    def _match_layout(self, assoc, fields):
+        """ Check one step's fields against the first step; return them in layout order. """
+        given = {f[0] : f for f in fields}
+        expected = [entry[0] for entry in self._layout[assoc]]
+        missing = [n for n in expected if n not in given]
+        extra = [n for n in given if n not in expected]
+        if missing or extra:
+            raise ValueError("step %d: %s data must have the same fields as the first step%s%s"
+                             % (len(self._times), assoc,
+                                "; missing: " + ", ".join(missing) if missing else "",
+                                "; unexpected: " + ", ".join(extra) if extra else ""))
+        ordered = []
+        for name, dtype_str, dtype, size, ncomp in self._layout[assoc]:
+            f = given[name]
+            if f[1] != dtype_str or f[2].size != size:
+                raise ValueError("step %d: %s data '%s' is %s with %d values; the first step had "
+                                 "%s with %d values" % (len(self._times), assoc, name, f[1],
+                                                        f[2].size, dtype_str, size))
+            arr = f[2]
+            if arr.dtype != dtype:
+                if not np.can_cast(arr.dtype, dtype, casting = "safe"):
+                    raise TypeError("step %d: %s data '%s' has dtype %s, which cannot be safely "
+                                    "converted to %s (the dtype of the first step)"
+                                    % (len(self._times), assoc, name, arr.dtype, dtype))
+                arr = arr.astype(dtype)
+            ordered.append([name, dtype_str, arr, ncomp])
+        return ordered
+
+    def _start_vtu(self):
+        if self._planned_times is not None:
+            self._open_vtu(self._planned_times)
+            self._stream = self._vtk.xml.stream
+        else:
+            directory, base = os.path.split(os.path.realpath(os.path.abspath(self.path + ".vtu")))
+            self._scratch_path = os.path.join(directory, ".%s.%s.steps" % (base[:40],
+                                                                          uuid.uuid4().hex[:8]))
+            self._scratch = open(self._scratch_path, "x+b")
+            self._stream = self._scratch
+
+    def _remove_scratch(self):
+        if self._scratch is not None:
+            try:
+                self._scratch.close()
+            finally:
+                self._scratch = None
+                try:
+                    os.remove(self._scratch_path)
+                except OSError:
+                    pass
+
+    def _open_vtu(self, times):
+        """ Write the header for len(times) steps, then the mesh and the static data.
+            Step data is laid out time step by time step after that:
+                offset(field f, step k) = G + k * S + (sizes of the fields before f),
+            where G is the size of the mesh and static blocks and S that of one step. """
+        x, y, z, connectivity, offsets, cell_types = self._mesh
+        nsteps = len(times)
+        w = VtkFile(self.path, VtkUnstructuredGrid)
+        self._vtk = w
+        if self._comments: w.addComments(self._comments)
+        w.openGrid(time_values = " ".join(_number_to_string(float(t)) for t in times))
+        w.openPiece(ncells = self._ncells, npoints = self._npoints)
+        w.openElement("Points")
+        w.addData("points", (x, y, z))
+        w.closeElement("Points")
+        w.openElement("Cells")
+        w.addData("connectivity", connectivity)
+        w.addData("offsets", offsets)
+        w.addData("types", cell_types)
+        w.closeElement("Cells")
+
+        # byte offsets
+        pos = w.offset
+        static_offsets = {}
+        for assoc in ("point", "cell"):
+            static_offsets[assoc] = []
+            for f in self._static[assoc]:
+                static_offsets[assoc].append(pos)
+                pos += _block_size(f[2])
+        G = pos
+        step_offsets = {}
+        pos = 0
+        for assoc in ("point", "cell"):
+            step_offsets[assoc] = []
+            for name, dtype_str, dtype, size, ncomp in self._layout[assoc]:
+                step_offsets[assoc].append(pos)
+                pos += 8 + size * dtype.itemsize
+        S = pos
+
+        for assoc, tag in (("point", "Point"), ("cell", "Cell")):
+            layout, static = self._layout[assoc], self._static[assoc]
+            if not layout and not static:
+                continue
+            defaults = {}
+            for dtype_str, name in ([(e[1], e[0]) for e in layout] + [(f[1], f[0]) for f in static]):
+                defaults.setdefault(dtype_str, name)
+            w.openData(tag, **defaults)
+            # Time-dependent arrays first, step by step, then the static arrays: with this
+            # order the arrays are also matched correctly by VTK readers that pair data
+            # elements with output arrays by position (VTK 9.5 and earlier).
+            for k in range(nsteps):
+                for (name, dtype_str, dtype, size, ncomp), off in zip(layout, step_offsets[assoc]):
+                    w.addHeader(name, dtype.name, size // ncomp, ncomp, time_value = str(k),
+                                offset = G + k * S + off)
+            for f, off in zip(static, static_offsets[assoc]):
+                w.addHeader(f[0], f[2].dtype.name, f[2].size // f[3], f[3], offset = off)
+            w.closeData(tag)
+        w.closePiece()
+        w.closeGrid()
+
+        w.appendData((x, y, z))
+        w.appendData(connectivity).appendData(offsets).appendData(cell_types)
+        for assoc in ("point", "cell"):
+            for f in self._static[assoc]:
+                w.appendData(f[2])
+
+    def _write_pvd_step(self, k, t, fields):
+        directory = self.path
+        base = os.path.basename(os.path.normpath(self.path))
+        os.makedirs(directory, exist_ok = True)
+        x, y, z, connectivity, offsets, cell_types = self._mesh
+        step_file = _write_unstructured(os.path.join(directory, "%s_%05d" % (base, k)),
+                                        x, y, z, connectivity, offsets, cell_types,
+                                        fields["cell"] + self._static["cell"],
+                                        fields["point"] + self._static["point"],
+                                        self._comments)
+        entries = self._pvd_files + [(step_file, t)]
+        # the .pvd is rewritten completely (and atomically); if that fails, the step is not
+        # counted, and writing it again later reuses the same step file name
+        with VtkGroup(self.path) as group:
+            for filename, time in entries:
+                group.addFile(filepath = filename, sim_time = _number_to_string(time))
+        self._pvd_files = entries
