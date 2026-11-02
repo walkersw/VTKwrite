@@ -8,6 +8,8 @@ version = "0.0.4"
 dependencies = [
   "numpy",
 ]
+# h5py is only needed for TimeSeriesUnstructuredGrid(..., output="vtkhdf")
+optional-dependencies = { hdf5 = ["h5py"] }
 requires-python = ">=3.6"
 authors = [
   {name = "Shawn W. Walker", email = "walker@lsu.edu"},

@@ -54,7 +54,15 @@ with TimeSeriesUnstructuredGrid("out/sol", x, y, z, connectivity, offsets, cell_
         ...  # compute u (one value per point) and q (shape (npoints, 3))
         ts.write_step(t, point_data={"u": u, "q": q})
 ```
-By default everything goes into one file, `out/sol.vtu` (the mesh is stored once), plus `out/sol_time_values.vtu` with the actual time values. With `output="pvd"` it writes `out/sol.pvd` and one file per step in `out/sol/`; ParaView then shows the actual time values, and the steps written so far can be opened even if the run stops early. See `examples/unstructured_timeseries.py`.
+Three kinds of output (choose with `output=`):
+
+| `output=` | Files | Notes |
+|---|---|---|
+| `"vtu"` (default) | `out/sol.vtu` + `out/sol_time_values.vtu` | One XML file, mesh stored once. **Not read correctly by VTK 9.6+ / ParaView 6.1+** (see below). |
+| `"vtkhdf"` | `out/sol.vtkhdf` | One HDF5 file, mesh stored once, actual time values shown by ParaView. Needs `h5py` (`pip install h5py`). Works with ParaView 5.12 and later, including 6.1. |
+| `"pvd"` | `out/sol.pvd` + `out/sol/sol_00000.vtu`, ... | One file per step (mesh repeated), actual time values. Works with all ParaView versions; steps already written can be opened if the run stops early. |
+
+See `examples/unstructured_timeseries.py`.
 
 ## Testing
 
@@ -64,6 +72,19 @@ python -m pip install pytest vtk
 python -m pytest tests
 ```
 
-## Known issue: VTK 9.6 and later
+## Known issue: single-file .vtu time series in VTK 9.6 / ParaView 6.1 and later
 
-VTK 9.6 and later (including ParaView releases built on it) read only the first time step of a single-file time series (written by `TimeSeriesUnstructuredGrid` or `timeseries_unstructuredGrid`); later steps show wrong values. This is a bug in VTK's XML reader (reported upstream with a fix). Until a fixed VTK is released, use `output="pvd"`, or ParaView/VTK 9.5 or earlier for single-file time series.
+VTK 9.6 and later, and therefore ParaView 6.1 and later, read only the first time step of a time series stored in a single `.vtu` file. That covers files written by `timeseries_unstructuredGrid` and by `TimeSeriesUnstructuredGrid` with `output="vtu"`. When such a file is opened, ParaView prints warnings like
+
+```
+Warning: In vtkXMLDataReader.cxx, line 286
+vtkXMLUnstructuredGridReader (...): Another point data array named u already exists. Ignoring.
+```
+
+and every later time step shows the values of the first step (or garbage). The files themselves are correct: VTK 9.5 / ParaView 6.0 and earlier read them properly. This is a bug in VTK's XML reader, introduced in VTK 9.6; it has been reported upstream together with a fix.
+
+Until a fixed VTK/ParaView is released:
+- use `TimeSeriesUnstructuredGrid` with `output="vtkhdf"` (single file) or `output="pvd"`, or
+- open single-file `.vtu` time series with ParaView 6.0 or earlier.
+
+Single-step `.vtu` files, `.pvd` collections and `.vtkhdf` files are not affected.

@@ -24,7 +24,7 @@ def test_example_runs(tmp_path, monkeypatch, vtk, name):
     assert written and not [f for f in written if f.endswith((".part", ".steps"))]
     readers = {".vtu": vtk.vtkXMLUnstructuredGridReader, ".vts": vtk.vtkXMLStructuredGridReader,
                ".vtr": vtk.vtkXMLRectilinearGridReader, ".vti": vtk.vtkXMLImageDataReader,
-               ".pvd": None}
+               ".vtkhdf": vtk.vtkHDFReader, ".pvd": None}
     for f in written:
         reader = readers[os.path.splitext(f)[1]]
         if reader is None:

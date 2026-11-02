@@ -222,7 +222,7 @@ def test_other_errors(tmp_path):
     with pytest.raises(ValueError, match="both as static and time-dependent"):
         with TimeSeriesUnstructuredGrid(str(tmp_path / "b"), *MESH, **STATIC) as ts:
             ts.write_step(0.0, point_data={"h": u_at(0)})
-    with pytest.raises(ValueError, match="output must be"):
+    with pytest.raises(ValueError, match="output must be 'vtu', 'vtkhdf' or 'pvd'"):
         TimeSeriesUnstructuredGrid(str(tmp_path / "c"), *MESH, output="vtk")
     ts = write_all(tmp_path / "d", steps=1)
     with pytest.raises(RuntimeError, match="closed"):
@@ -330,3 +330,103 @@ def test_close_twice_returns_the_same_path(tmp_path):
     ts = TimeSeriesUnstructuredGrid(str(tmp_path / "sol"), *MESH)
     ts.write_step(0.0, point_data={"u": u_at(0)})
     assert ts.close() == ts.close() == str(tmp_path / "sol.vtu")
+
+
+# ---------- output = "vtkhdf" ----------
+def write_hdf(path, steps=4, **kw):
+    pytest.importorskip("h5py")
+    return write_all(path, steps=steps, output="vtkhdf", **kw)
+
+
+def test_vtkhdf_structure(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    write_hdf(tmp_path / "sol")
+    assert not leftovers(tmp_path)
+    with h5py.File(tmp_path / "sol.vtkhdf", "r") as f:
+        root = f["VTKHDF"]
+        assert list(root.attrs["Version"]) == [2, 0]
+        assert root.attrs["Type"] == b"UnstructuredGrid"
+        np.testing.assert_array_equal(root["Points"][:], np.column_stack((X, Y, Z)))
+        np.testing.assert_array_equal(root["Offsets"][:], [0, 3, 7])
+        steps = root["Steps"]
+        assert steps.attrs["NSteps"] == 4
+        np.testing.assert_array_equal(steps["Values"][:], TIMES)
+        np.testing.assert_array_equal(steps["PointDataOffsets/u"][:], [0, 6, 12, 18])
+        np.testing.assert_array_equal(steps["PointDataOffsets/h"][:], [0, 0, 0, 0])
+        np.testing.assert_array_equal(steps["CellDataOffsets/p"][:], [0, 2, 4, 6])
+        for k in range(4):
+            np.testing.assert_array_equal(root["PointData/u"][6 * k:6 * k + 6], u_at(k))
+            np.testing.assert_array_equal(root["PointData/q"][6 * k:6 * k + 6], q_at(k))
+            np.testing.assert_array_equal(root["CellData/p"][2 * k:2 * k + 2], p_at(k))
+        np.testing.assert_array_equal(root["CellData/material"][:], [7, 8])
+        assert root["PointData/u"].attrs["Attribute"] == b"Scalars"
+        assert root["PointData/q"].attrs["Attribute"] == b"Vectors"
+
+
+def test_vtkhdf_read_by_vtk(tmp_path, vtk):
+    write_hdf(tmp_path / "sol", times=TIMES)
+    r = vtk.vtkHDFReader()
+    r.SetFileName(str(tmp_path / "sol.vtkhdf"))
+    r.UpdateInformation()
+    info = r.GetOutputInformation(0)
+    key = vtk.vtkStreamingDemandDrivenPipeline.TIME_STEPS()
+    assert [info.Get(key, i) for i in range(info.Length(key))] == TIMES
+    for k, t in enumerate(TIMES):
+        r.UpdateTimeStep(t)
+        out = r.GetOutput()
+        assert out.GetNumberOfPoints() == 6 and out.GetNumberOfCells() == 2
+        pd, cd = out.GetPointData(), out.GetCellData()
+        np.testing.assert_array_equal(vtk_array(vtk, pd, "u"), u_at(k))
+        np.testing.assert_array_equal(vtk_array(vtk, pd, "q"), q_at(k))
+        np.testing.assert_array_equal(vtk_array(vtk, cd, "p"), p_at(k))
+        np.testing.assert_array_equal(vtk_array(vtk, cd, "material"), [7, 8])
+        np.testing.assert_array_equal(vtk_array(vtk, pd, "h"), np.linspace(0, 1, 6))
+
+
+def test_vtkhdf_other_types(tmp_path, vtk):
+    pytest.importorskip("h5py")
+    with TimeSeriesUnstructuredGrid(str(tmp_path / "sol"), *MESH, output="vtkhdf") as ts:
+        for k in range(2):
+            ts.write_step(float(k), point_data={"T": np.arange(54.0).reshape(6, 9) + k,
+                                                "uv": ("tcoords", np.zeros((6, 2)) + k),
+                                                "id": np.arange(6, dtype=np.int32)})
+    r = vtk.vtkHDFReader()
+    r.SetFileName(str(tmp_path / "sol.vtkhdf"))
+    r.UpdateTimeStep(1.0)
+    pd = r.GetOutput().GetPointData()
+    np.testing.assert_array_equal(vtk_array(vtk, pd, "T"), np.arange(54.0).reshape(6, 9) + 1)
+    np.testing.assert_array_equal(vtk_array(vtk, pd, "uv"), np.ones((6, 2)))
+    np.testing.assert_array_equal(vtk_array(vtk, pd, "id"), np.arange(6))
+
+
+def test_vtkhdf_names(tmp_path):
+    pytest.importorskip("h5py")
+    with pytest.raises(ValueError, match="may not contain"):
+        TimeSeriesUnstructuredGrid(str(tmp_path / "a"), *MESH, output="vtkhdf",
+                                   static_point_data={"a.b": np.zeros(6)})
+    with TimeSeriesUnstructuredGrid(str(tmp_path / "b"), *MESH, output="vtkhdf") as ts:
+        with pytest.raises(ValueError, match="may not contain"):
+            ts.write_step(0.0, point_data={"u/v": u_at(0)})
+        ts.write_step(0.0, point_data={"u": u_at(0)})
+    assert sorted(os.listdir(tmp_path)) == ["b.vtkhdf"]
+
+
+def test_vtkhdf_error_leaves_nothing(tmp_path, monkeypatch):
+    pytest.importorskip("h5py")
+    with pytest.raises(RuntimeError):
+        with TimeSeriesUnstructuredGrid(str(tmp_path / "sol"), *MESH, output="vtkhdf") as ts:
+            ts.write_step(0.0, point_data={"u": u_at(0)})
+            raise RuntimeError("stop")
+    assert os.listdir(tmp_path) == []
+    ts = TimeSeriesUnstructuredGrid(str(tmp_path / "sol"), *MESH, output="vtkhdf", times=TIMES)
+    ts.write_step(point_data={"u": u_at(0)})
+    with pytest.raises(ValueError, match="only 1 of the 4"):
+        ts.close()
+    assert os.listdir(tmp_path) == []
+
+
+def test_vtkhdf_needs_h5py(tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "h5py", None)
+    with pytest.raises(ImportError, match="pip install h5py"):
+        TimeSeriesUnstructuredGrid(str(tmp_path / "sol"), *MESH, output="vtkhdf")

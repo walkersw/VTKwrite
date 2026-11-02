@@ -1231,7 +1231,15 @@ class TimeSeriesUnstructuredGrid:
       companion file (see timeseries_unstructuredGrid.write_fake_grid_for_time).
       The .vtu only exists once close() has succeeded.
       NOTE: VTK 9.6 and later (e.g. ParaView 6.1) have a bug that reads only the first
-      time step of such files; use output = "pvd" for those versions.
+      time step of such files; use output = "vtkhdf" or "pvd" for those versions.
+
+    * output = "vtkhdf": everything in ONE VTKHDF (HDF5) file, <path>.vtkhdf.  The mesh is
+      stored once and each field is one HDF5 dataset holding all time steps; the actual
+      time values are stored in the file, so ParaView shows them directly.  Each step is
+      written to disk as soon as write_step() is called.  Needs the h5py package.  Read
+      by ParaView 5.12 and later, including 6.1 (checked with VTK 9.4, 9.5, 9.6 and 9.7).
+      Array names may not contain "/" or ".".  The file only exists once close() has
+      succeeded.
 
     * output = "pvd": a ParaView collection.  Each step is a complete .vtu file in the
       folder <path>/, named <name>_00000.vtu, <name>_00001.vtu, ..., and <path>.pvd lists
@@ -1264,7 +1272,8 @@ class TimeSeriesUnstructuredGrid:
         x, y, z, connectivity, offsets, cell_types: the mesh, as in unstructuredGridToVTK.
         times: the time values (strictly increasing), if known in advance.  Then exactly
                this many steps must be written, and write_step(time) may omit the time.
-        output: "vtu" (one file) or "pvd" (one file per step plus a .pvd).
+        output: "vtu" (one .vtu file), "vtkhdf" (one .vtkhdf file) or "pvd" (one .vtu file
+               per step plus a .pvd).
         static_point_data, static_cell_data: dictionaries {name: array} of data that do
                not depend on time; written once.
         comments: list of comment strings for the file header(s).
@@ -1276,10 +1285,17 @@ class TimeSeriesUnstructuredGrid:
     def __init__(self, path, x, y, z, connectivity, offsets, cell_types, times = None,
                  output = "vtu", static_point_data = None, static_cell_data = None,
                  comments = None, time_values_file = True):
-        if output not in ("vtu", "pvd"):
-            raise ValueError("output must be 'vtu' or 'pvd', got %r" % (output,))
+        if output not in ("vtu", "vtkhdf", "pvd"):
+            raise ValueError("output must be 'vtu', 'vtkhdf' or 'pvd', got %r" % (output,))
         self.path = str(path)
         self.output = output
+        if output == "vtkhdf":
+            try:
+                import h5py
+            except ImportError:
+                raise ImportError("output = 'vtkhdf' needs the h5py package; "
+                                  "install it with 'pip install h5py'") from None
+            self._h5py = h5py
         x, y, z = _check_xyz(x, y, z)
         connectivity, offsets, cell_types = _check_topology(connectivity, offsets, cell_types,
                                                             x.size)
@@ -1289,6 +1305,9 @@ class TimeSeriesUnstructuredGrid:
                         "cell" : self._fields(static_cell_data, "static_cell_data", "cell")}
         self._comments = _check_comments(comments)
         self._time_values_file = time_values_file
+        if output == "vtkhdf":
+            for assoc in ("point", "cell"):
+                self._check_hdf_names(self._static[assoc], "static_%s_data" % assoc)
 
         if times is not None:
             times = _to_vector("times", times).astype(float)
@@ -1311,6 +1330,8 @@ class TimeSeriesUnstructuredGrid:
         self._scratch = None        # output = "vtu", times unknown: step data until close()
         self._scratch_path = None
         self._stream = None         # where step data is appended
+        self._h5 = None             # output = "vtkhdf": the open h5py.File
+        self._h5_tmppath = None
         self._closed = False
 
     # ---------- context manager ----------
@@ -1404,6 +1425,22 @@ class TimeSeriesUnstructuredGrid:
                 # a partly written step cannot be undone: discard the output
                 self.abort()
                 raise
+        elif self.output == "vtkhdf":
+            if self._layout is None:
+                for assoc in ("point", "cell"):
+                    self._check_hdf_names(fields[assoc], "%s_data" % assoc)
+                self._layout = layout
+                try:
+                    self._start_hdf()
+                except BaseException:
+                    self._layout = None
+                    self._remove_hdf()
+                    raise
+            try:
+                self._write_hdf_step(k, t, fields)
+            except BaseException:
+                self.abort()
+                raise
         else:
             self._layout = layout
             self._write_pvd_step(k, t, fields)
@@ -1415,7 +1452,7 @@ class TimeSeriesUnstructuredGrid:
         Finish the output.
 
         RETURNS:
-            Full path of the .vtu file (output = "vtu") or of the .pvd file (output = "pvd").
+            Full path of the .vtu, .vtkhdf or .pvd file.
         """
         if self._closed:
             if self._result is not None:
@@ -1427,7 +1464,7 @@ class TimeSeriesUnstructuredGrid:
             raise ValueError("no time steps were written; nothing was saved")
         if self._planned_times is not None and nsteps != self._planned_times.size:
             missing = self._planned_times.size - nsteps
-            if self.output == "vtu":
+            if self.output != "pvd":
                 self.abort()
                 raise ValueError("only %d of the %d time steps in 'times' were written; "
                                  "the file was discarded" % (nsteps, self._planned_times.size))
@@ -1438,6 +1475,19 @@ class TimeSeriesUnstructuredGrid:
         if self.output == "pvd":
             self._closed = True
             self._result = os.path.abspath(self.path + ".pvd")
+            return self._result
+        if self.output == "vtkhdf":
+            try:
+                self._h5.close()
+                self._h5 = None
+                target = os.path.realpath(os.path.abspath(self.path + ".vtkhdf"))
+                os.replace(self._h5_tmppath, target)
+                self._h5_tmppath = None
+            except BaseException:
+                self.abort()
+                raise
+            self._closed = True
+            self._result = os.path.abspath(self.path + ".vtkhdf")
             return self._result
 
         tv_writer = None
@@ -1469,12 +1519,13 @@ class TimeSeriesUnstructuredGrid:
         return filename
 
     def abort(self):
-        """ Stop without saving.  For output = "vtu" nothing is written; for output = "pvd"
-            the steps written so far (and the .pvd listing them) are kept. """
+        """ Stop without saving.  For output = "vtu" or "vtkhdf" nothing is written; for
+            output = "pvd" the steps written so far (and the .pvd listing them) are kept. """
         self._closed = True
         if self._vtk is not None:
             self._vtk.abort()
         self._remove_scratch()
+        self._remove_hdf()
 
     # ---------- helpers ----------
     def _fields(self, data, where, assoc):
@@ -1626,3 +1677,130 @@ class TimeSeriesUnstructuredGrid:
             for filename, time in entries:
                 group.addFile(filepath = filename, sim_time = _number_to_string(time))
         self._pvd_files = entries
+
+    # ---------- output = "vtkhdf" ----------
+    # Layout (VTKHDF 2.0, temporal UnstructuredGrid with a static mesh, one part):
+    #   /VTKHDF                  attributes Version = [2, 0], Type = "UnstructuredGrid"
+    #     Points (n, 3), Connectivity, Offsets (ncells + 1, starting with 0), Types
+    #     NumberOfPoints, NumberOfCells, NumberOfConnectivityIds: one entry (the one part)
+    #     PointData/<name>, CellData/<name>: all steps stacked, (nsteps * n[, ncomp]);
+    #                          static arrays hold a single copy, (n[, ncomp])
+    #     Steps                attribute NSteps; per step: Values (the time), PartOffsets = 0,
+    #                          NumberOfParts = 1, PointOffsets = 0, CellOffsets = 0,
+    #                          ConnectivityIdOffsets = 0 (the mesh is reused), and
+    #                          PointDataOffsets/<name>, CellDataOffsets/<name> = k * n
+    #                          (0 for static arrays)
+    # Arrays carry the "Attribute" string (Scalars, Vectors, ...) for the first array of
+    # each type; readers older than VTKHDF 2.6 ignore it.
+    _HDF_ATTRIBUTE = {"scalars" : "Scalars", "vectors" : "Vectors", "normals" : "Normals",
+                      "tensors" : "Tensors", "tcoords" : "TCoords"}
+
+    @staticmethod
+    def _check_hdf_names(fields, where):
+        for f in fields:
+            if "/" in f[0] or "." in f[0]:
+                raise ValueError("%s: VTKHDF array names may not contain '/' or '.', got '%s'"
+                                 % (where, f[0]))
+
+    def _start_hdf(self):
+        h5py = self._h5py
+        target = os.path.realpath(os.path.abspath(self.path + ".vtkhdf"))
+        directory, base = os.path.split(target)
+        self._h5_tmppath = os.path.join(directory, ".%s.%s.part" % (base[:40], uuid.uuid4().hex[:8]))
+        f = h5py.File(self._h5_tmppath, "x")
+        self._h5 = f
+        x, y, z, connectivity, offsets, cell_types = self._mesh
+
+        def fixed_string(text):
+            data = text.encode("ascii")
+            return data, h5py.string_dtype("ascii", len(data))
+
+        root = f.create_group("VTKHDF")
+        root.attrs["Version"] = np.array([2, 0], dtype = np.int64)
+        data, dtype = fixed_string("UnstructuredGrid")
+        root.attrs.create("Type", data, dtype = dtype)
+        points = np.empty((self._npoints, 3), dtype = x.dtype)
+        points[:, 0], points[:, 1], points[:, 2] = (np.ravel(c, order = 'F') for c in (x, y, z))
+        root.create_dataset("Points", data = points)
+        root.create_dataset("Connectivity", data = connectivity.astype(np.int64))
+        root.create_dataset("Offsets", data = np.concatenate(([0], offsets)).astype(np.int64))
+        root.create_dataset("Types", data = cell_types.astype(np.uint8))
+        for name, value in (("NumberOfPoints", self._npoints), ("NumberOfCells", self._ncells),
+                            ("NumberOfConnectivityIds", connectivity.size)):
+            root.create_dataset(name, data = np.array([value], dtype = np.int64))
+
+        steps = root.create_group("Steps")
+        steps.attrs["NSteps"] = np.int64(0)
+        for name, dtype in (("Values", np.float64), ("PartOffsets", np.int64),
+                            ("NumberOfParts", np.int64), ("PointOffsets", np.int64)):
+            steps.create_dataset(name, shape = (0,), maxshape = (None,), dtype = dtype,
+                                 chunks = (128,))
+        for name in ("CellOffsets", "ConnectivityIdOffsets"):
+            steps.create_dataset(name, shape = (0, 1), maxshape = (None, 1), dtype = np.int64,
+                                 chunks = (128, 1))
+
+        for assoc, group_name in (("point", "PointData"), ("cell", "CellData")):
+            n = self._npoints if assoc == "point" else self._ncells
+            group = root.create_group(group_name)
+            offsets_group = steps.create_group(group_name + "Offsets")
+            marked = set()
+            entries = ([(e[0], e[1], e[2], e[4], False) for e in self._layout[assoc]] +
+                       [(f[0], f[1], f[2].dtype, f[3], True) for f in self._static[assoc]])
+            for name, dtype_str, dtype, ncomp, static in entries:
+                shape = (n,) if ncomp == 1 else (n, ncomp)
+                if static:
+                    arr = [f[2] for f in self._static[assoc] if f[0] == name][0]
+                    ds = group.create_dataset(name, data = arr.reshape(shape))
+                else:
+                    # chunks of about 1 MB, at most one step long
+                    rows = max(1, min(n, 2**20 // max(1, dtype.itemsize * ncomp)))
+                    ds = group.create_dataset(name, shape = (0,) + shape[1:],
+                                              maxshape = (None,) + shape[1:], dtype = dtype,
+                                              chunks = (rows,) + shape[1:])
+                if dtype_str not in marked:
+                    marked.add(dtype_str)
+                    data, string_dtype = fixed_string(self._HDF_ATTRIBUTE[dtype_str])
+                    ds.attrs.create("Attribute", data, dtype = string_dtype)
+                offsets_group.create_dataset(name, shape = (0,), maxshape = (None,),
+                                             dtype = np.int64, chunks = (128,))
+
+    def _write_hdf_step(self, k, t, fields):
+        root = self._h5["VTKHDF"]
+        steps = root["Steps"]
+
+        def append(ds, value):
+            ds.resize(ds.shape[0] + 1, axis = 0)
+            ds[-1] = value
+
+        for assoc, group_name in (("point", "PointData"), ("cell", "CellData")):
+            n = self._npoints if assoc == "point" else self._ncells
+            group, offsets_group = root[group_name], steps[group_name + "Offsets"]
+            for name, dtype_str, arr, ncomp in fields[assoc]:
+                ds = group[name]
+                ds.resize((k + 1) * n, axis = 0)
+                ds[k * n:(k + 1) * n] = arr if ncomp == 1 else arr.reshape(n, ncomp)
+                append(offsets_group[name], k * n)
+            for f in self._static[assoc]:
+                append(offsets_group[f[0]], 0)
+        append(steps["Values"], t)
+        append(steps["PartOffsets"], 0)
+        append(steps["NumberOfParts"], 1)
+        append(steps["PointOffsets"], 0)
+        append(steps["CellOffsets"], [0])
+        append(steps["ConnectivityIdOffsets"], [0])
+        steps.attrs["NSteps"] = np.int64(k + 1)
+        self._h5.flush()
+
+    def _remove_hdf(self):
+        if self._h5 is not None:
+            try:
+                self._h5.close()
+            except Exception:
+                pass
+            self._h5 = None
+        if self._h5_tmppath is not None:
+            try:
+                os.remove(self._h5_tmppath)
+            except OSError:
+                pass
+            self._h5_tmppath = None

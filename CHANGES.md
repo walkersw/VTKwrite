@@ -58,4 +58,13 @@ Streaming time series (review section 4):
 - `VtkGroup` works when the .pvd path has no folder part (e.g. `VtkGroup("sol")`).
 - `VtkFile.addHeader` accepts an explicit `offset`.
 
+VTKHDF output:
+
+- `TimeSeriesUnstructuredGrid(..., output="vtkhdf")` writes the whole time series into one VTKHDF (HDF5) file, `<name>.vtkhdf`. It is not affected by the VTK 9.6 XML time-series bug.
+  - The mesh and the static fields are stored once, and each time-dependent field is one dataset holding all steps.
+  - The actual time values are stored in the file, and steps are written as they come.
+  - Checked with VTK 9.4, 9.5, 9.6 (the version in ParaView 6.1) and 9.7.
+  - Needs `h5py` (optional dependency: `pip install VTKwrite[hdf5]` or `pip install h5py`).
+- README: a fuller note on the VTK 9.6 / ParaView 6.1 single-file `.vtu` problem, and a table of the three time-series outputs.
+
 Still open (see the review): API conveniences (e.g. (n, 3) arrays and dictionaries for the other writers, FEM cell types), and packaging metadata.

@@ -1,8 +1,8 @@
 """
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Example of how to use TimeSeriesUnstructuredGrid to write a time-dependent
-simulation one step at a time, either into a single .vtu file or as a .pvd
-collection with one .vtu file per step.
+simulation one step at a time: into a single .vtu file, into a single .vtkhdf
+(HDF5) file, or as a .pvd collection with one .vtu file per step.
 
 The mesh is a structured triangulation of the unit square; the "solution" is
 u(x, y, t) = exp(-t) sin(pi x) sin(pi y), with its gradient as a vector field,
@@ -17,9 +17,11 @@ from VTKwrite.vtkbin import VtkTriangle
 
 FILE_PATH_VTU = "./timeseries_single"
 FILE_PATH_PVD = "./timeseries_collection"
+FILE_PATH_HDF = "./timeseries_single_hdf"
 
 def clean():
-    for f in (FILE_PATH_VTU + ".vtu", FILE_PATH_VTU + "_time_values.vtu", FILE_PATH_PVD + ".pvd"):
+    for f in (FILE_PATH_VTU + ".vtu", FILE_PATH_VTU + "_time_values.vtu", FILE_PATH_PVD + ".pvd",
+              FILE_PATH_HDF + ".vtkhdf"):
         try:
             os.remove(f)
         except OSError:
@@ -64,8 +66,24 @@ def run():
             u, grad_u = solution(x, y, t)
             ts.write_step(t, point_data = {"u": u, "grad_u": grad_u})
     # -> timeseries_single.vtu, and timeseries_single_time_values.vtu with the actual times
+    # NOTE: VTK 9.6+ (ParaView 6.1) reads only the first step of such files (a VTK bug);
+    #       use the .vtkhdf or .pvd output below with those versions.
 
-    # 2. A .pvd collection: timeseries_collection.pvd + timeseries_collection/*.vtu
+    # 2. Everything in one VTKHDF (HDF5) file, with the actual time values (needs h5py).
+    try:
+        import h5py
+    except ImportError:
+        print("  h5py is not installed: skipping the .vtkhdf output")
+    else:
+        with TimeSeriesUnstructuredGrid(FILE_PATH_HDF, x, y, z, conn, offsets, cell_types,
+                                        output = "vtkhdf",
+                                        static_cell_data = {"region": region}) as ts:
+            for t in times:
+                u, grad_u = solution(x, y, t)
+                ts.write_step(t, point_data = {"u": u, "grad_u": grad_u})
+        # -> timeseries_single_hdf.vtkhdf
+
+    # 3. A .pvd collection: timeseries_collection.pvd + timeseries_collection/*.vtu
     #    (readable by all ParaView versions, and usable even if the run stops early)
     with TimeSeriesUnstructuredGrid(FILE_PATH_PVD, x, y, z, conn, offsets, cell_types,
                                     output = "pvd", static_cell_data = {"region": region}) as ts:
