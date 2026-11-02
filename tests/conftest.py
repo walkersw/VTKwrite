@@ -18,7 +18,8 @@ _TYPES = {"Int8": "i1", "UInt8": "u1", "Int16": "i2", "UInt16": "u2", "Int32": "
 
 def read_appended(path):
     """Return {(name, TimeStep or None): numpy array} for every appended DataArray."""
-    raw = open(path, "rb").read()
+    with open(path, "rb") as f:
+        raw = f.read()
     order = "<" if b'byte_order="LittleEndian"' in raw[:400] else ">"
     i = raw.index(b"<AppendedData")
     j = raw.index(b"_", i) + 1

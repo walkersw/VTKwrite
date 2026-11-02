@@ -35,7 +35,7 @@ def write(tmp_path, **kw):
     (dict(all_point_data=[["v", "vectors", np.zeros(6)]]), ValueError, "expected 18"),
     (dict(all_cell_data=[["p", "scalars", np.zeros(2)], ["p", "scalars", np.ones(2)]]),
      ValueError, "used twice"),
-    (dict(all_cell_data=[["m", "scalars", np.array([True, False])]]), TypeError, "'bool'"),
+    (dict(all_cell_data=[["m", "scalars", np.zeros(2, dtype=np.float16)]]), TypeError, "'float16'"),
     (dict(all_cell_data=[["p", "scalars"]]), TypeError, "[name, type, data]"),
     (dict(all_point_data=[["uv", "tcoords", np.zeros(7)]]), ValueError, "tcoords"),
     (dict(y=np.zeros(5)), ValueError, "same number of entries"),

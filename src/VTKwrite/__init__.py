@@ -3,6 +3,14 @@ VTKwrite
 ~~~~~~
 The VTKwrite package - a Python package for writing VTK data in XML format.
 
+The writers, the time-series classes, VtkFile/VtkGroup and the cell types can be
+imported from the package itself, e.g.
+
+    from VTKwrite import unstructuredGridToVTK, TimeSeriesUnstructuredGrid, VtkTriangle
+
+(__all__ lists them).  The older imports from VTKwrite.interface and VTKwrite.vtkbin
+still work.
+
 Copyright (c) 02-23-2025,  Shawn W. Walker
 """
 
@@ -38,3 +46,42 @@ Copyright (c) 02-23-2025,  Shawn W. Walker
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 ######################################################################################
+
+# The single place where the version is set (pyproject.toml reads it from here).
+__version__ = "0.1.0"
+
+from .vtkbin import (
+    VtkFile, VtkGroup,
+    # file types, for VtkFile
+    VtkImageData, VtkPolyData, VtkRectilinearGrid, VtkStructuredGrid, VtkUnstructuredGrid,
+    # cell types (VtkTriangle.tid is the VTK id of a triangle, etc.)
+    VtkCellType,
+    VtkVertex, VtkPolyVertex, VtkLine, VtkPolyLine, VtkTriangle, VtkTriangleStrip,
+    VtkPolygon, VtkPixel, VtkQuad, VtkTetra, VtkVoxel, VtkHexahedron, VtkWedge, VtkPyramid,
+    VtkQuadraticEdge, VtkQuadraticTriangle, VtkQuadraticQuad, VtkQuadraticTetra,
+    VtkQuadraticHexahedron,
+)
+from .interface import (
+    imageToVTK, rectilinearToVTK, structuredToVTK, pointsToVTK, pointsToVTKAsTIN,
+    linesToVTK, polyLinesToVTK, unstructuredGridToVTK, cylinderToVTK,
+    TimeSeriesUnstructuredGrid, timeseries_unstructuredGrid,
+)
+
+# (__version__ is deliberately not in __all__: "from VTKwrite import *" should not
+# replace the __version__ of the importing module)
+__all__ = [
+    # high-level writers
+    "imageToVTK", "rectilinearToVTK", "structuredToVTK", "pointsToVTK", "pointsToVTKAsTIN",
+    "linesToVTK", "polyLinesToVTK", "unstructuredGridToVTK", "cylinderToVTK",
+    # time series
+    "TimeSeriesUnstructuredGrid", "timeseries_unstructuredGrid",
+    # low level
+    "VtkFile", "VtkGroup",
+    "VtkImageData", "VtkPolyData", "VtkRectilinearGrid", "VtkStructuredGrid", "VtkUnstructuredGrid",
+    # cell types
+    "VtkCellType",
+    "VtkVertex", "VtkPolyVertex", "VtkLine", "VtkPolyLine", "VtkTriangle", "VtkTriangleStrip",
+    "VtkPolygon", "VtkPixel", "VtkQuad", "VtkTetra", "VtkVoxel", "VtkHexahedron", "VtkWedge",
+    "VtkPyramid", "VtkQuadraticEdge", "VtkQuadraticTriangle", "VtkQuadraticQuad",
+    "VtkQuadraticTetra", "VtkQuadraticHexahedron",
+]

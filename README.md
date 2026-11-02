@@ -8,27 +8,38 @@ Python package to write VTK files in XML format
 
 https://github.com/paulo-herrera/PyEVTK
 
-- Installation is done in the standard way:  ```python setup.py install```
+- Installation: `pip install .` (see [Installation](#installation) below).
 
-- Or if you want a development version: ```python -m pip install -e .```
-
-- You need Python 3.6 or better.
+- You need Python 3.10 or better, and NumPy.
 
 - Compatibility: the generated files can be read by Paraview versions: 5.4, 5.5, 5.6, 5.7, AND 5.11.  I added a time-dependent .vtu file example to the unit tests of Paraview, so it should keep working in the future.
 
-## Local Install Help
+## Installation
 
-If you need to make a "local" install (because you are not an administrator), then the install command will look like:
+Run one of these in the package folder (the one containing `pyproject.toml`):
 
 ```
-python setup.py install --prefix ~/.local
+pip install .              # regular install
+pip install -e .           # development ("editable") install: changes to src/ take effect without reinstalling
+pip install --user .       # install for your user account only (if you are not an administrator)
 ```
 
-where you need to modify the ```~/.local``` text to reflect your system setup.
+Optional extras, which can be combined with any of the above:
 
-Note: the command above will install it to this directory: ```~/.local/lib/python3.x/site-packages/```
+```
+pip install ".[hdf5]"      # also installs h5py, needed for TimeSeriesUnstructuredGrid(..., output="vtkhdf")
+pip install -e ".[test]"   # also installs what the tests need: pytest, vtk, h5py, scipy
+```
+
+`python setup.py install` is no longer supported. Inside a virtual environment, use `pip install .` without `--user`.
 
 ## Usage
+
+Everything can be imported from the package itself, for example
+```python
+from VTKwrite import unstructuredGridToVTK, TimeSeriesUnstructuredGrid, VtkTriangle, VtkQuad
+```
+(`import VTKwrite; VTKwrite.__all__` lists the names). The older imports from `VTKwrite.interface` and `VTKwrite.vtkbin` still work.
 
 After installing, go to the ./examples/ sub-directory and do this:
 ```
@@ -46,7 +57,7 @@ The individual Python files should give you enough information to use this packa
 
 `TimeSeriesUnstructuredGrid` writes a simulation on a fixed unstructured mesh one time step at a time, so the whole history never has to be kept in memory:
 ```python
-from VTKwrite.interface import TimeSeriesUnstructuredGrid
+from VTKwrite import TimeSeriesUnstructuredGrid
 
 with TimeSeriesUnstructuredGrid("out/sol", x, y, z, connectivity, offsets, cell_types,
                                 static_cell_data={"material": material}) as ts:
@@ -66,11 +77,12 @@ See `examples/unstructured_timeseries.py`.
 
 ## Testing
 
-This test writes files and reads them back (with VTK's own readers where available):
+The tests write files and read them back (with VTK's own readers where available). From the package folder:
 ```
-python -m pip install pytest vtk
+pip install -e ".[test]"
 python -m pytest tests
 ```
+Tests that need `vtk`, `h5py` or `scipy` are skipped if that package is missing.
 
 ## Known issue: single-file .vtu time series in VTK 9.6 / ParaView 6.1 and later
 

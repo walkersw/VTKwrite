@@ -199,21 +199,15 @@ class VtkFile:
             PARAMETERS:
                 filepath: filename without extension.
                 ftype: file type, e.g. VtkImageData, etc.
-                largeFile: If size of the stored data cannot be represented by a UInt32.
+                largeFile: ignored; kept so that existing calls keep working.  Every file
+                           declares header_type="UInt64" (64-bit block sizes), so arrays
+                           larger than 4 GB need no special option.
         """
         self.ftype = ftype
         self.filename = filepath + ftype.ext
         self.xml = XmlWriter(self.filename)
         self.offset = 0  # offset in bytes after beginning of binary section
         self.appendedDataIsOpen = False
-#        self.largeFile = largeFile
-
-#       if largeFile == False:
-#            self.xml.openElement("VTKFile").addAttributes(type = ftype.name,
-#                                                          version = "0.1",
-#                                                          byte_order = _get_byte_order())
-#        else:
-#           print "WARNING: output file only compatible with VTK 6.0 and later."
         self.xml.openElement("VTKFile").addAttributes(type = ftype.name,
                                                           version = "1.0",
                                                           byte_order = _get_byte_order(),
@@ -438,11 +432,7 @@ class VtkFile:
         if explicit_offset:
             return self
 
-        #TODO: Check if 4/8 is platform independent
-        #if self.largeFile == False:
-        #    self.offset += nelem * ncomp * dtype.size + 4 # add 4 to indicate array size
-        #else:
-        self.offset += nelem * ncomp * dtype.size + 8 # add 8 to indicate array size
+        self.offset += nelem * ncomp * dtype.size + 8 # 8 bytes for the UInt64 block size
         return self
 
     # SWW: keep this for now...
@@ -515,10 +505,7 @@ class VtkFile:
             dsize = data[0].dtype.itemsize
             nelem = data[0].size
             block_size = ncomp * nelem * dsize
-            #if self.largeFile == False:
             writeBlockSize(self.xml.stream, block_size)
-            #else:
-            #    writeBlockSize64Bit(self.xml.stream, block_size)
             x, y, z = data[0], data[1], data[2]
             writeArraysToFile(self.xml.stream, x, y, z)
             
@@ -527,10 +514,7 @@ class VtkFile:
             dsize = data.dtype.itemsize
             nelem = data.size
             block_size = ncomp * nelem * dsize
-            #if self.largeFile == False:
             writeBlockSize(self.xml.stream, block_size)
-            #else:
-            #    writeBlockSize64Bit(self.xml.stream, block_size)
             writeArrayToFile(self.xml.stream, data)
 
         else:

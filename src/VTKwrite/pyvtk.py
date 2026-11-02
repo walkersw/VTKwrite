@@ -8,10 +8,8 @@ Copyright (c) 05-07-2021,  Shawn W. Walker
 
 import struct
 import sys
-try:
-    import numpy as np
-except:
-    print("Numpy is not installed. Please install it before running VTKwrite again.")
+
+import numpy as np
 
 # Map numpy dtype to struct format
 np_to_struct = { 'int8'    : 'b',

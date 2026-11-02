@@ -1,12 +1,21 @@
-# Dirs #
-########
+__pycache__/
+*.py[cod]
+*.egg-info/
 build/
 dist/
-VTKwrite.egg-info/ 
-pyvtk/__pycache__/__init__.cpython-310.pyc
-pyvtk/__pycache__/interface.cpython-310.pyc
-pyvtk/__pycache__/vtkbin.cpython-310.pyc
-pyvtk/__pycache__/pyvtk.cpython-310.pyc
-pyvtk/__pycache__/xmlwrite.cpython-310.pyc
-examples/__pycache__/group.cpython-312.pyc
-*.pyc
+.pytest_cache/
+
+# temporary files of writes that were interrupted
+.*.part
+.*.steps
+
+# output of the examples (python runall.py run)
+examples/*.vtu
+examples/*.vts
+examples/*.vtr
+examples/*.vti
+examples/*.vtp
+examples/*.pvd
+examples/*.vtkhdf
+examples/group/
+examples/timeseries_collection/

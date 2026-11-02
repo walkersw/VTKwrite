@@ -1,16 +1,15 @@
 [build-system]
-requires = ["setuptools >= 61.0"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "VTKwrite"
-version = "0.0.4"
+# the version is VTKwrite.__version__ in src/VTKwrite/__init__.py
+dynamic = ["version"]
 dependencies = [
   "numpy",
 ]
-# h5py is only needed for TimeSeriesUnstructuredGrid(..., output="vtkhdf")
-optional-dependencies = { hdf5 = ["h5py"] }
-requires-python = ">=3.6"
+requires-python = ">=3.10"
 authors = [
   {name = "Shawn W. Walker", email = "walker@lsu.edu"},
 ]
@@ -19,17 +18,29 @@ maintainers = [
 ]
 description = "Python Class for writing VTK data in XML format with *raw* (binary) data"
 readme = "README.md"
-license = {file = "LICENSE"}
-keywords = ["mesh"]
+# VTKwrite is GPL-3.0-only; the code derived from PyEVTK is MIT (LICENSES/MIT-PyEVTK.txt)
+license = "GPL-3.0-only AND MIT"
+license-files = ["LICENSE", "LICENSES/MIT-PyEVTK.txt"]
+keywords = ["mesh", "vtk", "paraview"]
 classifiers = [
 	"Programming Language :: Python :: 3",
-	"License :: OSI Approved :: GNU GENERAL PUBLIC LICENSE",
-	"Operating System :: OS Independent"
+	"Operating System :: OS Independent",
+	"Intended Audience :: Science/Research",
+	"Topic :: Scientific/Engineering :: Visualization",
 ]
+
+[project.optional-dependencies]
+# h5py is only needed for TimeSeriesUnstructuredGrid(..., output="vtkhdf")
+hdf5 = ["h5py"]
+# to run the tests: pip install -e ".[test]", then python -m pytest tests
+test = ["pytest", "vtk", "h5py", "scipy"]
 
 [tool.setuptools]
 packages = ["VTKwrite"]
 package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "VTKwrite.__version__"}
 
 [project.urls]
 Homepage = "https://github.com/walkersw/VTKwrite"

@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.1.0 (unreleased)
 
 Fixes for files that were silently wrong or unreadable (review section 2):
 
@@ -9,7 +9,7 @@ Fixes for files that were silently wrong or unreadable (review section 2):
 - **XML escaping**: array names and other attributes are escaped (`&`, `<`, `"`, ...); comments containing `--` are made legal. Names may contain non-ASCII characters (files are UTF-8).
 - **Active attributes**: `PointData`/`CellData` now carry `Scalars=`/`Vectors=`/... (VTK matches these names case-sensitively, so the previous lowercase names were ignored and no active scalars/vectors were set).
 - **No partial files**: files are written to a temporary file and renamed when complete. An error part-way through leaves no file behind and does not overwrite an existing file. `VtkFile` and `VtkGroup` can be used as context managers (`with VtkFile(...) as w:`), which save on success and discard on error.
-- **Input checks**: all high-level functions check their inputs before opening the file and raise `ValueError`/`TypeError` with a message naming the problem. This covers unknown data types (e.g. `"scalar"`), wrong array lengths, duplicate names, unsupported dtypes (e.g. `bool`), mismatched `x`/`y`/`z`, and inconsistent `connectivity`/`offsets`/`cell_types`. These checks no longer use `assert`, so they also run under `python -O`.
+- **Input checks**: all high-level functions check their inputs before opening the file and raise `ValueError`/`TypeError` with a message naming the problem. This covers unknown data types (e.g. `"scalar"`), wrong array lengths, duplicate names, unsupported dtypes (e.g. `float16`), mismatched `x`/`y`/`z`, and inconsistent `connectivity`/`offsets`/`cell_types`. These checks no longer use `assert`, so they also run under `python -O`.
 - **Time series** (`timeseries_unstructuredGrid`): every `append_data` call is checked against the header written at initialization: the number of time steps, the number of values, and the dtype. A lossless dtype change (e.g. float32 to float64) is converted; anything else raises. Nothing is written by a failed call. `close_unstructuredGridToVTK` raises, and discards the file, if a variable was never appended.
 
 Side effects of the checks (previously crashed or wrote bad files):
@@ -72,4 +72,26 @@ Examples:
 - `examples/group.py` now writes the step files that `group.pvd` lists (before, the .pvd pointed at files that did not exist). It shows when to use `VtkGroup`: a mesh that changes in time (here a stretching domain, re-meshed more finely at each step).
 - `tests/test_examples.py` checks that every file listed in a .pvd exists.
 
-Still open (see the review): API conveniences (e.g. (n, 3) arrays and dictionaries for the other writers, FEM cell types), and packaging metadata.
+Packaging (review section 7):
+
+- Version 0.1.0. It is set in one place, `VTKwrite.__version__` in `src/VTKwrite/__init__.py`, which `pyproject.toml` reads.
+- License metadata in the current format: `license = "GPL-3.0-only AND MIT"` (an SPDX expression: GPL-3.0-only for VTKwrite, MIT for the code derived from PyEVTK) and `license-files`. The license classifier is removed: it was not a valid trove classifier, so PyPI would have rejected an upload. Building no longer prints setuptools deprecation warnings. Building needs setuptools 77 or later (pip installs it automatically).
+- The MIT notice of PyEVTK, on which VTKwrite is based, is also shipped as `LICENSES/MIT-PyEVTK.txt`, so it is part of every wheel and source distribution. It is still in `__init__.py` too.
+- Requires Python 3.10 or later. The metadata said 3.6, which current NumPy and setuptools do not support. Tested with Python 3.10 and 3.13.
+- New extra `test`: `pip install -e ".[test]"` installs pytest, vtk, h5py and scipy. The `hdf5` extra is unchanged.
+- Removed `setup.py` (empty) and `setup_py.BAK` (out of date). Install with `pip install .`; `python setup.py install` is no longer supported.
+- The source distribution now contains the examples, `tests/conftest.py` and `CHANGES.md` (new `MANIFEST.in`), so its tests can be run. Before, it had the test files but not `conftest.py` or the examples they need.
+- Added a `.gitignore`.
+- README: a new installation section (`pip install .`, `pip install -e .`, `pip install --user .`, the extras), and the tests are installed through the `test` extra.
+
+Package namespace (review section 6):
+
+- Everything public can be imported from the package itself, e.g. `from VTKwrite import unstructuredGridToVTK, TimeSeriesUnstructuredGrid, VtkTriangle`. This covers the high-level writers, both time-series classes, `VtkFile`, `VtkGroup`, the file types (`VtkUnstructuredGrid`, ...), `VtkCellType` and the cell types. `VTKwrite.__all__` lists them. The older imports from `VTKwrite.interface` and `VTKwrite.vtkbin` still work.
+- `VTKwrite.__version__` gives the version.
+- `bool` data arrays (e.g. boundary markers) are accepted as point and cell data, in all writers and both time-series classes, and are written as `UInt8` (0 and 1). Before, they raised `TypeError`. Coordinates and topology arrays of dtype `bool` are still rejected, as are dtypes that VTK files cannot hold (e.g. `float16`).
+- Importing VTKwrite without NumPy raises `ImportError`. Before, a message was printed and the code failed later with `NameError`.
+- `VtkFile(..., largeFile=...)`: the parameter is documented as ignored, because the files always use 64-bit block sizes. It is kept so that existing calls still work.
+- `VTKwrite.interface` imports the names it needs from `vtkbin` explicitly, instead of `from .vtkbin import *`. Every name that could be imported from `VTKwrite.interface` before still can, except the modules `sys` and `numbers`.
+- New tests: `tests/test_namespace.py` (exports, version, old import paths, cell type ids against VTK's constants) and `tests/test_bool_data.py`.
+
+Still open (see the review): (n, 3) arrays and dictionaries for the other writers, FEM cell types (quadratic wedge/pyramid, Lagrange cells), a .vtp writer, and compression.

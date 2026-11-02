@@ -1,0 +1,5 @@
+# extra files for the source distribution (the package, README and licenses are
+# included automatically)
+include CHANGES.md
+recursive-include examples *.py
+recursive-include tests *.py

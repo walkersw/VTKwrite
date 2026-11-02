@@ -7,20 +7,36 @@ All inputs are checked before a file is opened, and errors raise ValueError or
 TypeError (not assert, so the checks also run under "python -O"). A file is only
 created under its final name once it has been written completely.
 
+Data arrays (point and cell data) of dtype bool, e.g. boundary markers, are written
+as UInt8 (0 and 1); VTK XML files have no bool type.
+
 Copyright (c) 05-07-2021,  Shawn W. Walker
 """
 
-from .vtkbin import * # VtkFile, VtkUnstructuredGrid, etc.
-from .vtkbin import _vtk_data_type, _number_to_string
-from .xmlwrite import sanitize_comment, XmlWriter
-from .pyvtk import writeBlockSize, writeArrayToFile
 import os
 import shutil
 import uuid
-try:
-    import numpy as np
-except:
-    print("Numpy is not installed. Please install it before running VTKwrite again.")
+
+import numpy as np
+
+from .vtkbin import (VtkFile, VtkGroup,
+                     VtkImageData, VtkRectilinearGrid, VtkStructuredGrid, VtkUnstructuredGrid,
+                     VtkVertex, VtkLine, VtkPolyLine, VtkTriangle, VtkQuad, VtkTetra,
+                     _vtk_data_type, _number_to_string)
+from .xmlwrite import sanitize_comment, XmlWriter
+from .pyvtk import writeBlockSize, writeArrayToFile
+
+# Not used here, but importable from this module since it used "from .vtkbin import *";
+# kept so that existing imports such as "from VTKwrite.interface import VtkHexahedron"
+# keep working.
+from .vtkbin import (VtkFileType, VtkDataType, VtkCellType, VtkPolyData, np_to_vtk,
+                     VtkInt8, VtkUInt8, VtkInt16, VtkUInt16, VtkInt32, VtkUInt32,
+                     VtkInt64, VtkUInt64, VtkFloat32, VtkFloat64,
+                     VtkPolyVertex, VtkTriangleStrip, VtkPolygon, VtkPixel, VtkVoxel,
+                     VtkHexahedron, VtkWedge, VtkPyramid, VtkQuadraticEdge,
+                     VtkQuadraticTriangle, VtkQuadraticQuad, VtkQuadraticTetra,
+                     VtkQuadraticHexahedron)
+from .pyvtk import writeArraysToFile
 
 # =================================
 #       Input checking
@@ -29,8 +45,11 @@ except:
 _NCOMP = {"scalars" : 1, "vectors" : 3, "normals" : 3, "tensors" : 9, "tcoords" : None}
 _ALL_TYPES = ("scalars", "vectors", "normals", "tensors", "tcoords")
 
-def _to_array(what, a):
-    """ Convert a list/tuple/array to a numpy array with a dtype VTK supports. """
+def _to_array(what, a, bool_to_uint8 = False):
+    """ Convert a list/tuple/array to a numpy array with a dtype VTK supports.
+        bool_to_uint8: convert bool data (e.g. boundary markers) to UInt8 (0 and 1);
+                       used for data fields.  Otherwise bool is rejected, as are other
+                       dtypes VTK does not support. """
     if isinstance(a, np.ndarray):
         arr = a
     elif isinstance(a, (list, tuple)):
@@ -38,6 +57,8 @@ def _to_array(what, a):
     else:
         raise TypeError("%s must be a numpy array, list or tuple, got %s"
                         % (what, type(a).__name__))
+    if bool_to_uint8 and arr.dtype == np.bool_:
+        arr = arr.astype(np.uint8)
     if arr.dtype.byteorder not in ("=", "|"):
         arr = arr.astype(arr.dtype.newbyteorder("="))
     try:
@@ -97,7 +118,7 @@ def _check_fields(fields, where, ntuples, allowed = _ALL_TYPES, shape3d = None):
         if dtype_str not in allowed:
             raise ValueError("%s['%s']: type %r is not allowed here; use one of %s"
                              % (where, name, dtype_str, ", ".join(repr(t) for t in allowed)))
-        arr = _to_array("%s['%s']" % (where, name), data)
+        arr = _to_array("%s['%s']" % (where, name), data, bool_to_uint8 = True)
         if arr.ndim not in (1, 3):
             raise ValueError("%s['%s'] must be a 1-D array%s, got shape %s"
                              % (where, name,
@@ -367,7 +388,7 @@ def imageToVTK(path, origin = (0.0,0.0,0.0), spacing = (1.0,1.0,1.0), all_cell_d
         entry = fields[0]
         if not isinstance(entry, (list, tuple)) or len(entry) != 3:
             raise TypeError("%s[0] must be a list [name, type, data]" % where)
-        arr = _to_array("%s[0]" % where, entry[2])
+        arr = _to_array("%s[0]" % where, entry[2], bool_to_uint8 = True)
         if arr.ndim != 3:
             raise ValueError("imageToVTK needs 3-D arrays; %s[0] has shape %s" % (where, arr.shape))
         return tuple(arr.shape)
@@ -1114,7 +1135,7 @@ class timeseries_unstructuredGrid:
         # check everything before writing anything
         arrays = []
         for ii in range(ntimes):
-            arr = _to_array("%s, time index %d" % (where, ii), varData[ii])
+            arr = _to_array("%s, time index %d" % (where, ii), varData[ii], bool_to_uint8 = True)
             if arr.ndim not in (1, 3):
                 raise ValueError("%s, time index %d: must be a 1-D array, got shape %s"
                                  % (where, ii, arr.shape))
@@ -1190,7 +1211,7 @@ def _step_field(where, name, value, ntuples):
         raise TypeError("%s['%s']: give multi-component data as one array with one row per "
                         "point/cell, e.g. np.column_stack((vx, vy, vz)), not as a %s of arrays"
                         % (where, name, type(data).__name__))
-    arr = _to_array("%s['%s']" % (where, name), data)
+    arr = _to_array("%s['%s']" % (where, name), data, bool_to_uint8 = True)
     if arr.ndim == 2 and arr.shape[0] == ntuples:
         arr = np.ascontiguousarray(arr).reshape(-1)     # rows are tuples: x0 y0 z0 x1 ...
     elif arr.ndim != 1:
