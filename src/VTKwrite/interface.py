@@ -753,11 +753,7 @@ def polyLinesToVTK(path, x, y, z, pointsPerLine, all_cell_data = None, all_point
     comments = _check_comments(comments)
 
     # create some temporary arrays to write grid topology
-    offsets = np.zeros(ncells, dtype = 'int32')         # index of last node in each cell
-    ii = 0
-    for i in range(ncells):
-        ii += pointsPerLine[i]
-        offsets[i] = ii
+    offsets = np.cumsum(pointsPerLine).astype('int32')  # index of last node in each cell
 
     connectivity = np.arange(npoints, dtype = 'int32')      # each line connects points that are consecutive
 

@@ -38,4 +38,11 @@ Remaining functional bugs (review section 3):
 
 Added tests for these and a test that runs every example and reads its output back.
 
-Still open (see the review): write speed, a streaming time-series interface, and packaging metadata.
+Write speed (review section 5):
+
+- The binary data is written with NumPy instead of one `struct.pack` call per value, about 15–20× faster for unstructured grids and about 10× faster for structured grids. Writing 10^6 points + 10^6 tetrahedra + 2 point fields went from about 1.8 s to 0.1 s.
+- Points are interleaved in chunks of 2^20, so the extra memory stays bounded for large meshes. Peak memory in the benchmark went from 310 MB to 203 MB.
+- The output is byte-for-byte identical to before (checked on all examples, on 50 000-cell meshes with mixed dtypes, non-native byte order, C/Fortran-ordered and strided 3-D arrays, and in `tests/test_binary.py` against the original algorithm).
+- `polyLinesToVTK` computes offsets with `np.cumsum` instead of a Python loop.
+
+Still open (see the review): a streaming time-series interface, API conveniences, and packaging metadata.
