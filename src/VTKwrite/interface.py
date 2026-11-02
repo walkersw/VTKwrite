@@ -149,6 +149,16 @@ def _check_topology(connectivity, offsets, cell_types, npoints):
         raise ValueError("connectivity refers to point %d, but there are only %d points"
                          % (int(connectivity.max() if connectivity.max() >= npoints
                                 else connectivity.min()), npoints))
+    if cell_types.size and (cell_types.min() < 0 or cell_types.max() > 255):
+        raise ValueError("cell_types must be VTK cell type ids between 0 and 255")
+    # VTK expects integer topology arrays and UInt8 cell types; floats (e.g. from
+    # np.zeros(n)) used to be written as Float64, which some readers reject.
+    if connectivity.dtype.kind not in "iu":
+        connectivity = connectivity.astype(np.int64)
+    if offsets.dtype.kind not in "iu":
+        offsets = offsets.astype(np.int64)
+    if cell_types.dtype != np.uint8:
+        cell_types = cell_types.astype(np.uint8)
     return connectivity, offsets, cell_types
 
 # =================================
@@ -595,7 +605,8 @@ def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
         PARAMETERS:
             path: name of the file without extension where data should be saved.
             x, y, z: 1D list-type object (list, tuple or numpy) with coordinates of the points.
-            data: (THIS IS NOT ACTUALLY USED!) A List of Lists.  It has this format:
+            data: additional point data (optional), written after the "Elevation" array
+                  (which holds z).  A List of Lists.  It has this format:
                     data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
@@ -605,52 +616,40 @@ def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
                     Note: the length of "data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
             ndim: is the number of dimensions considered when calling Delaunay.
-                  If ndim = 2, then only coordinates x and y are passed.
-                  If ndim = 3, then x, y and z coordinates are passed.
+                  If ndim = 2, then only coordinates x and y are passed, and the cells are triangles.
+                  If ndim = 3, then x, y and z coordinates are passed, and the cells are tetrahedra.
             
         RETURNS:
             Full path to saved file.
         
         REQUIRES: Scipy > 1.2.
     """
-    # TODO: Check if it makes and it would be possible to add cellData.
     try:
         from scipy.spatial import Delaunay
-    except:
-        print("Failed to import scipy.spatial. Please install it if it is not installed.")
+    except ImportError:
+        raise ImportError("pointsToVTKAsTIN needs scipy (scipy.spatial.Delaunay); "
+                          "install it with 'pip install scipy'") from None
 
     if ndim not in (2, 3):
         raise ValueError("ndim must be 2 or 3, got %r" % (ndim,))
     x, y, z = _check_xyz(x, y, z)
-    #XXX = __convertDictListToArrays(data)
+    npts = x.size
+    point_fields = _check_fields([["Elevation", "scalars", z]] + list(data or []),
+                                 "data", npts)
+    comments = _check_comments(comments)
 
-    npts = len(x)
+    # Delaunay triangulation (ndim = 2) or tetrahedralization (ndim = 3)
+    coords = (x, y) if ndim == 2 else (x, y, z)
+    tri = Delaunay(np.column_stack([np.ravel(c, order = 'F') for c in coords]))
+    simplices = tri.simplices                    # (ncells, ndim + 1)
+    ncells, nverts = simplices.shape
+    conn = simplices.astype(np.int64).ravel()
+    offset = np.arange(1, ncells + 1, dtype = np.int64) * nverts
+    tid = VtkTriangle.tid if ndim == 2 else VtkTetra.tid
+    cell_type = np.full(ncells, tid, dtype = np.uint8)
 
-    points = np.zeros( (npts, ndim) ) # needs to create the 2D or 3D temporary array to call Delaunay
-    for i in range(npts):
-        points[i,0] = x[i]
-        points[i,1] = y[i]
-        if ndim > 2: points[i,2] = z[i]
-
-    tri = Delaunay(points)
-
-    # list of triangles that form the tesselation
-    ncells, npoints_per_cell = tri.simplices.shape[0], tri.simplices.shape[1]
-    conn =  np.zeros(ncells * 3)
-    for i in range(ncells):
-        ii = i * 3
-        conn[ii]     = tri.simplices[i,0]
-        conn[ii + 1] = tri.simplices[i,1]
-        conn[ii + 2] = tri.simplices[i,2]
-
-    offset = np.zeros(ncells)
-    for i in range(ncells): offset[i] = (i + 1) * 3
-
-    # initialize the data structure
-    all_point_data = [["Elevation", "scalars", z]]
-
-    cell_type = np.ones(ncells) * VtkTriangle.tid
-    unstructuredGridToVTK(path, x, y, z, connectivity = conn, offsets = offset, cell_types = cell_type, all_cell_data = None, all_point_data = all_point_data, comments = None)
+    return _write_unstructured(path, x, y, z, conn, offset, cell_type,
+                               [], point_fields, comments)
 
 # ==============================================================================
 def linesToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comments = None ):
@@ -698,9 +697,7 @@ def linesToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comme
     # create some temporary arrays to write grid topology
     offsets = np.arange(start = 2, step = 2, stop = npoints + 1, dtype = 'int32') # index of last node in each cell
     connectivity = np.arange(npoints, dtype = 'int32')                          # each point is only connected to itself
-    cell_types = np.empty(npoints, dtype = 'uint8')
-
-    cell_types[:] = VtkLine.tid
+    cell_types = np.full(ncells, VtkLine.tid, dtype = 'uint8')                  # one type per line
 
     return _write_unstructured(path, x, y, z, connectivity, offsets, cell_types,
                                cell_fields, point_fields, comments)
@@ -764,8 +761,7 @@ def polyLinesToVTK(path, x, y, z, pointsPerLine, all_cell_data = None, all_point
 
     connectivity = np.arange(npoints, dtype = 'int32')      # each line connects points that are consecutive
 
-    cell_types = np.empty(npoints, dtype = 'uint8')
-    cell_types[:] = VtkPolyLine.tid
+    cell_types = np.full(ncells, VtkPolyLine.tid, dtype = 'uint8')  # one type per polyline
 
     return _write_unstructured(path, x, y, z, connectivity, offsets, cell_types,
                                cell_fields, point_fields, comments)
@@ -822,88 +818,75 @@ def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, all_
                                cell_fields, point_fields, comments)
 
 # ==============================================================================
-def cylinderToVTK(path, x0, y0, z0, z1, radius, nlayers, npilars = 16, cellData=None, pointData=None, comments = None ):
+def cylinderToVTK(path, x0, y0, z0, z1, radius, nlayers, npilars = 16, all_cell_data = None,
+                  all_point_data = None, comments = None, cellData = None, pointData = None):
     """
-        Export cylinder as VTK unstructured grid.  SWW: needs to be updated!!!!
-    
+        Export the lateral surface of a vertical cylinder as an unstructured grid of quads.
+
       PARAMETERS:
         path: path to file without extension.
-        x0, yo: center of cylinder.
+        x0, y0: center of cylinder.
         z0, z1: lower and top elevation of the cylinder.
         radius: radius of cylinder.
         nlayers: Number of layers in z direction to divide the cylinder.
-        npilars: Number of points around the diameter of the cylinder. 
+        npilars: Number of points around the circumference of the cylinder.
                  Higher value gives higher resolution to represent the curved shape.
-        cellData: dictionary with 1D arrays that store cell data. 
-                  Arrays should have number of elements equal to ncells = npilars * nlayers.
-        pointData: dictionary with 1D arrays that store point data.
-                  Arrays should have number of elements equal to npoints = npilars * (nlayers + 1).
+        all_cell_data: A List of Lists, as in unstructuredGridToVTK, for the
+                  ncells = npilars * nlayers quads.  Cell k * npilars + p is the quad between
+                  pillars p and p+1 (counted counter-clockwise from the x-axis) in layer k.
+        all_point_data: A List of Lists, as in unstructuredGridToVTK, for the
+                  npoints = npilars * (nlayers + 1) points.  Point k * npilars + p is at
+                  angle 2*pi*p/npilars and height level k.
         comments: list of comment strings, which will be added to the header section of the file.
-                    
-      RETURNS: 
+        cellData, pointData: (older form) dictionaries {name: 1D array} of scalar data;
+                  they are added to all_cell_data / all_point_data.
+
+      RETURNS:
             Full path to saved file.
-        
-        NOTE: This function only export vertical shapes for now. However, it should be easy to 
+
+        NOTE: This function only export vertical shapes for now. However, it should be easy to
               rotate the cylinder to represent other orientations.
     """
-    import math as m
-    
-    # Define x, y coordinates from polar coordinates.
-    dpi = 2.0 * m.pi / npilars
-    angles = np.arange(0.0, 2.0 * m.pi, dpi)
+    nlayers, npilars = int(nlayers), int(npilars)
+    if nlayers < 1 or npilars < 3:
+        raise ValueError("cylinderToVTK needs nlayers >= 1 and npilars >= 3")
 
-    x = radius * np.cos(angles) + x0
-    y = radius * np.sin(angles) + y0
+    # Points: npilars around the circle on each of the nlayers + 1 levels
+    angles = np.linspace(0.0, 2.0 * np.pi, npilars, endpoint = False)
+    levels = np.linspace(z0, z1, nlayers + 1)
+    xx = np.tile(x0 + radius * np.cos(angles), nlayers + 1)
+    yy = np.tile(y0 + radius * np.sin(angles), nlayers + 1)
+    zz = np.repeat(levels, npilars)
 
-    dz = (z1 - z0) / nlayers
-    z = np.arange(z0, z1+dz, step = dz)
+    # Quads (n0, n1, n3, n2), counter-clockwise seen from outside
+    p0 = np.arange(npilars)
+    p1 = (p0 + 1) % npilars
+    layer = np.arange(nlayers)[:, None] * npilars
+    n0, n1 = p0 + layer, p1 + layer
+    n2, n3 = n0 + npilars, n1 + npilars
+    conn = np.stack((n0, n1, n3, n2), axis = -1).astype(np.int64).ravel()
+    ncells = npilars * nlayers
+    offsets = np.arange(1, ncells + 1, dtype = np.int64) * 4
+    ctype = np.full(ncells, VtkQuad.tid, dtype = np.uint8)
 
-    npoints = npilars * (nlayers + 1)
-    ncells  = npilars * nlayers
+    # the older positional form passed dictionaries in these two places
+    if isinstance(all_cell_data, dict) and cellData is None:
+        all_cell_data, cellData = None, all_cell_data
+    if isinstance(all_point_data, dict) and pointData is None:
+        all_point_data, pointData = None, all_point_data
 
-    xx = np.zeros(npoints)
-    yy = np.zeros(npoints)
-    zz = np.zeros(npoints)
+    def _dict_to_fields(d, where):
+        if d is None:
+            return []
+        if not isinstance(d, dict):
+            raise TypeError("%s must be a dictionary {name: array}" % where)
+        return [[name, "scalars", arr] for name, arr in d.items()]
+    all_cell_data = list(all_cell_data or []) + _dict_to_fields(cellData, "cellData")
+    all_point_data = list(all_point_data or []) + _dict_to_fields(pointData, "pointData")
 
-    ii = 0
-    for k in range(nlayers + 1):
-        for p in range(npilars):
-            xx[ii] = x[p]
-            yy[ii] = y[p]
-            zz[ii] = z[k]
-            ii = ii + 1
-
-    # Define connectivity
-    conn = np.zeros(4 * ncells, dtype = np.int64)
-    ii = 0
-    for l in range(nlayers):
-        for p in range(npilars):
-            p0 = p
-            if(p + 1 == npilars):
-                p1 = 0 
-            else: 
-                p1 = p + 1 # circular loop
-       
-            n0 = p0 + l * npilars
-            n1 = p1 + l * npilars 
-            n2 = n0 + npilars
-            n3 = n1 + npilars
-        
-            conn[ii + 0] = n0
-            conn[ii + 1] = n1
-            conn[ii + 2] = n3
-            conn[ii + 3] = n2 
-            ii = ii + 4
- 
-    # Define offsets 
-    offsets = np.zeros(ncells, dtype = np.int64)
-    for i in range(ncells):
-        offsets[i] = (i + 1) * 4
-
-    # Define cell types
-    ctype = np.ones(ncells) + VtkPixel.tid
-    
-    return unstructuredGridToVTK(path, xx, yy, zz, connectivity = conn, offsets = offsets, cell_types = ctype, cellData = cellData, pointData = pointData, comments = comments)
+    return unstructuredGridToVTK(path, xx, yy, zz, connectivity = conn, offsets = offsets,
+                                 cell_types = ctype, all_cell_data = all_cell_data or None,
+                                 all_point_data = all_point_data or None, comments = comments)
 
 # =================================
 #  time-series on unstructuredGrid

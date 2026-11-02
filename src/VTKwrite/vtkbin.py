@@ -481,24 +481,6 @@ class VtkFile:
         else:
             raise TypeError("data for '%s' must be a numpy array" % name)
 
-    def appendHeader(self, dtype, nelem, ncomp):
-        """ This function only writes the size of the data block that will be appended.
-            The data itself must be written immediately after calling this function.
-            
-            PARAMETERS:
-                dtype: string with data type representation (same as numpy). For example, 'float64'
-                nelem: number of elements.
-                ncomp: number of components, 1 (=scalar) or 3 (=vector).
-        """
-        self.openAppendedData()
-        dsize = np_to_vtk[dtype].size
-        block_size = dsize * ncomp * nelem
-        if self.largeFile == False:
-            writeBlockSize(self.xml.stream, block_size)
-        else:
-            writeBlockSize64Bit(self.xml.stream, block_size)
-
-            
     def appendData(self, data):
         """ Append data to binary section.
             This function writes the header section and the data to the binary file.

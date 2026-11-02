@@ -51,21 +51,21 @@ def run():
     x[5], y[5], z[5] = 2.0, 1.0, 0.0
 
     # Define connectivity or vertices that belongs to each element
-    conn = np.zeros(10)
+    conn = np.zeros(10, dtype = np.int64)
 
     conn[0], conn[1], conn[2] = 0, 1, 3              # first triangle
     conn[3], conn[4], conn[5] = 1, 4, 3              # second triangle
     conn[6], conn[7], conn[8], conn[9] = 1, 2, 5, 4  # rectangle
 
     # Define offset of last vertex of each element
-    offset = np.zeros(3)
+    offset = np.zeros(3, dtype = np.int64)
     offset[0] = 3
     offset[1] = 6
     offset[2] = 10
 
     # Define cell types
 
-    ctype = np.zeros(3)
+    ctype = np.zeros(3, dtype = np.uint8)
     ctype[0], ctype[1] = VtkTriangle.tid, VtkTriangle.tid
     ctype[2] = VtkQuad.tid
     
