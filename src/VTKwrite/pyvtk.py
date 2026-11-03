@@ -77,10 +77,10 @@ def writeArraysToFile(stream, x, y, z):
     _struct_code(x.dtype)       # raises TypeError for unsupported dtypes
 
     # NOTE: VTK expects data in FORTRAN order
-    # This is only needed when a multidimensional array has C-layout
-    xx = np.ravel(x, order='F')
-    yy = np.ravel(y, order='F')
-    zz = np.ravel(z, order='F')
+    # This is only needed when a multidimensional array has C-layout.  1-D arrays are used
+    # as they are, also when strided (e.g. the columns of an (n, 3) points array), so that
+    # they are not copied as a whole: the chunks below copy them piece by piece.
+    xx, yy, zz = (c if c.ndim == 1 else np.ravel(c, order='F') for c in (x, y, z))
 
     nitems = xx.size
     dtype = x.dtype.newbyteorder("=")

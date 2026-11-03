@@ -7,8 +7,50 @@ All inputs are checked before a file is opened, and errors raise ValueError or
 TypeError (not assert, so the checks also run under "python -O"). A file is only
 created under its final name once it has been written completely.
 
-Data arrays (point and cell data) of dtype bool, e.g. boundary markers, are written
-as UInt8 (0 and 1); VTK XML files have no bool type.
+Point and cell data
+-------------------
+All writers take point and cell data (all_point_data, all_cell_data, ...) as a
+dictionary, e.g.
+
+    unstructuredGridToVTK("mesh", points = P, connectivity = conn, offsets = offsets,
+                          cell_types = types, all_point_data = {"u": u, "grad_u": G},
+                          all_cell_data = {"material": mat})
+
+The type of each array follows from its number of components per point or cell:
+1 -> "scalars", 3 -> "vectors", 9 -> "tensors".  Give {name: (type, array)} to choose
+another type, e.g. ("normals", n), or ("tcoords", uv) with 1, 2 or 3 components.  The
+order of the dictionary is the order in the file, and the first array of each type is
+made the active one (e.g. the default scalars in ParaView).
+
+An array may be
+  * 1-D: one value per point/cell, or the components interleaved (x0 y0 z0 x1 y1 z1 ...);
+    a 1-D array with 3 values per point is therefore read as vectors;
+  * 2-D with one row per point/cell, e.g. of shape (npoints, 3).  If the number of
+    points equals the number of components (e.g. 3 points with 3 components), the rows
+    are taken as the points;
+  * for structuredToVTK, rectilinearToVTK and imageToVTK: of the grid's shape
+    (nx, ny, nz) for scalars, or (nx, ny, nz, k) for k components (indexed
+    [i, j, k, component]); VTK's ordering is taken care of.  A 2-D array has one row per
+    point/cell in VTK's order (i fastest, then j, then k);
+  * for the other writers, a 3-D array of one value per point/cell is taken in Fortran
+    order, as the coordinates are (as before).
+Multi-component data given as a list or tuple of arrays, e.g. (vx, vy, vz), is rejected,
+because for 3 points it could not be told apart from 3 rows; use one array, e.g.
+np.column_stack((vx, vy, vz)) or, on a grid, np.stack((vx, vy, vz), axis = -1).
+Arrays of dtype bool, e.g. boundary markers, are written as UInt8 (0 and 1); VTK XML
+files have no bool type.
+
+The older form, a list of [name, type, array] entries, is still accepted, with the same
+arrays as above (e.g. ["q", "vectors", Q] with Q of shape (npoints, 3)).
+
+Points
+------
+The writers that take x, y, z (unstructuredGridToVTK, pointsToVTK, pointsToVTKAsTIN,
+linesToVTK, polyLinesToVTK, structuredToVTK and TimeSeriesUnstructuredGrid) also accept
+the points as one array, with the keyword points = (instead of x, y, z): of shape
+(npoints, 3), or (npoints, 2) for z = 0; for structuredToVTK of shape (nx, ny, nz, 3) or
+(nx, ny, nz, 2).  The other arguments must then be given by keyword, e.g.
+connectivity = conn.  Calls with x, y, z work as before.
 
 Copyright (c) 05-07-2021,  Shawn W. Walker
 """
@@ -87,60 +129,231 @@ def _check_xyz(x, y, z):
         x, y, z = x.astype(common), y.astype(common), z.astype(common)
     return x, y, z
 
+def _xyz_or_points(x, y, z, points, grid = False):
+    """ The point coordinates, given either as x, y, z or as points (keyword only):
+        an (n, 3) array, or (n, 2) for z = 0; for a structured grid (grid = True) an
+        (nx, ny, nz, 3) or (nx, ny, nz, 2) array.  Returns x, y, z (views of points; not
+        yet checked further). """
+    if points is None:
+        missing = [n for n, v in (("x", x), ("y", y), ("z", z)) if v is None]
+        if missing:
+            raise TypeError("the point coordinates are missing: give x, y and z, or points=... "
+                            "(missing: %s)" % ", ".join(missing))
+        return x, y, z
+    if x is not None or y is not None or z is not None:
+        raise TypeError("give the point coordinates either as x, y, z or as points=..., not both")
+    P = _to_array("points", points)
+    if P.ndim != (4 if grid else 2) or P.shape[-1] not in (2, 3):
+        raise ValueError("points must have shape %s, got %s"
+                         % ("(nx, ny, nz, 3) or (nx, ny, nz, 2)" if grid else "(n, 3) or (n, 2)",
+                            P.shape))
+    x, y = P[..., 0], P[..., 1]
+    z = P[..., 2] if P.shape[-1] == 3 else np.zeros(P.shape[:-1], dtype = P.dtype)
+    return x, y, z
+
+def _require(function, **arguments):
+    """ Arguments that have a default of None only so that points= can replace x, y, z. """
+    missing = [name for name, value in arguments.items() if value is None]
+    if missing:
+        raise TypeError("%s() is missing the argument%s %s"
+                        % (function, "s" if len(missing) > 1 else "",
+                           ", ".join("'%s'" % m for m in missing)))
+
 def _cells_per_direction(npoints_per_direction):
     """ Cells of a structured grid in each direction; a direction with a single
         point (a flat grid) still has one layer of cells, as in VTK. """
     return tuple(max(int(n) - 1, 1) for n in npoints_per_direction)
 
-def _check_fields(fields, where, ntuples, allowed = _ALL_TYPES, shape3d = None):
-    """ Check a list of [name, type, data] entries and return a NEW list of
-        [name, type, data_array, ncomp] (the caller's list is not modified).
+# type of a field given without one, from its number of components
+_INFERRED_TYPE = {1 : "scalars", 3 : "vectors", 9 : "tensors"}
 
-        where:   "all_cell_data" or "all_point_data" (used in error messages).
-        ntuples: number of cells or points the data must cover.
-        shape3d: if given, 3-D scalar arrays are also accepted and must have this shape.
-    """
+def _split_typed(value):
+    """ (type, data) of a field value given as data, or as (type, data); type None if
+        not given. """
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+        return value
+    return None, value
+
+def _field_entries(fields, where, dicts = True):
+    """ The fields of an all_cell_data/all_point_data-type argument, as a list of
+        (name, type or None, data).  Accepted: a dictionary {name: data} or
+        {name: (type, data)} (type None: inferred later), or a list of [name, type, data]
+        entries.  With dicts = False only the list form is accepted (as before 0.1.0). """
     if fields is None:
         return []
+    if dicts and isinstance(fields, dict):
+        entries = []
+        for name, value in fields.items():
+            if not isinstance(name, str) or not name:
+                raise TypeError("%s: field names must be non-empty strings, got %r" % (where, name))
+            dtype_str, data = _split_typed(value)
+            entries.append((name, dtype_str, data))
+        return entries
     if not isinstance(fields, (list, tuple)):
-        raise TypeError("%s must be a list of [name, type, data] entries" % where)
-    checked = []
-    names = set()
+        raise TypeError("%s must be %sa list of [name, type, data] entries"
+                        % (where, "a dictionary {name: array} or " if dicts else ""))
+    entries = []
     for ii, entry in enumerate(fields):
         if not isinstance(entry, (list, tuple)) or len(entry) != 3:
             raise TypeError("%s[%d] must be a list [name, type, data]" % (where, ii))
         name, dtype_str, data = entry
         if not isinstance(name, str) or not name:
             raise TypeError("%s[%d]: name must be a non-empty string, got %r" % (where, ii, name))
+        entries.append((name, dtype_str, data))
+    return entries
+
+def _reject_component_sequence(label, data, grid = False):
+    """ Multi-component data given as a list/tuple of component arrays, e.g. (vx, vy, vz),
+        or as a list of rows, is rejected: with 3 points and 3 components the two cannot
+        be told apart.  (Nested lists forming a 3-D array, as accepted before for
+        structured grids, are not affected.) """
+    if not isinstance(data, (list, tuple)) or len(data) == 0:
+        return
+    first = data[0]
+    if ((isinstance(first, np.ndarray) and first.ndim >= 1)
+            or (isinstance(first, (list, tuple)) and np.ndim(first) <= 1)):
+        raise TypeError("%s: give multi-component data as one array with one row per "
+                        "point/cell, e.g. np.column_stack((vx, vy, vz))%s, not as a %s of arrays"
+                        % (label, ", or with the grid's shape plus a component axis, e.g. "
+                           "np.stack((vx, vy, vz), axis=-1)" if grid else "",
+                           type(data).__name__))
+
+def _check_field(where, name, dtype_str, data, ntuples, allowed = _ALL_TYPES, shape3d = None,
+                 rows = True, nd3 = True):
+    """ Check one field; return [name, type, data_array, ncomp].
+
+        dtype_str: the type ("scalars", ...), or None to infer it from the number of
+                   components: 1 scalars, 3 vectors, 9 tensors.
+        shape3d:   the grid shape (nx, ny, nz) of a structured, rectilinear or image grid.
+        rows:      accept 2-D arrays with one row per point/cell, and with shape3d,
+                   (nx, ny, nz, k) arrays (False: only 1-D and 3-D arrays, as before 0.1.0).
+        nd3:       accept 3-D arrays (taken in Fortran order, as the coordinates are).
+
+        data_array is 1-D, or 3-D (kept as given and written in Fortran order).  2-D rows
+        and (nx, ny, nz, k) arrays are copied into the interleaved order VTK expects
+        (component fastest; then i, j, k on a grid).
+    """
+    label = "%s['%s']" % (where, name)
+    if dtype_str is not None and dtype_str not in allowed:
+        raise ValueError("%s: type %r is not allowed here; use one of %s"
+                         % (label, dtype_str, ", ".join(repr(t) for t in allowed)))
+    tuple_word = "cell" if "cell" in where else "point"
+    if rows:
+        _reject_component_sequence(label, data, grid = shape3d is not None)
+    arr = _to_array(label, data, bool_to_uint8 = True)
+    grid = tuple(shape3d) if shape3d is not None else None
+
+    ncomp_shape = None      # number of components, if the shape says it
+    if arr.ndim == 1:
+        pass
+    elif rows and arr.ndim == 2 and arr.shape[0] == ntuples:
+        ncomp_shape = arr.shape[1]
+        arr = np.ascontiguousarray(arr).reshape(-1)         # rows are tuples: x0 y0 z0 x1 ...
+    elif rows and grid is not None and arr.ndim == 4 and arr.shape[:3] == grid:
+        ncomp_shape = arr.shape[3]
+        # VTK order: the component fastest, then i, then j, then k
+        arr = np.ravel(np.moveaxis(arr, -1, 0), order = 'F')
+    elif nd3 and arr.ndim == 3:
+        if grid is not None and arr.shape == grid:
+            ncomp_shape = 1
+    elif not rows:
+        raise ValueError("%s must be a 1-D array%s, got shape %s"
+                         % (label, " (or a 3-D array of shape %s for scalars)" % (grid,)
+                            if grid is not None else "", arr.shape))
+    else:
+        accepted = "a 1-D array, or a 2-D array with one row per %s (%d rows)" % (tuple_word, ntuples)
+        if grid is not None:
+            accepted += ", or of shape %s, or %s + (k,) for k components" % (grid, grid)
+        raise ValueError("%s must be %s; got shape %s" % (label, accepted, arr.shape))
+
+    if dtype_str is None:
+        if ncomp_shape is not None:
+            ncomp = ncomp_shape
+        elif arr.ndim == 3:
+            # not of the grid's shape: as in the list form, read in Fortran order, which
+            # only makes sense as one value per point/cell
+            if arr.size != ntuples:
+                raise ValueError("%s: a 3-D array is read as one value per %s (in Fortran "
+                                 "order), but it has %d values for %d %ss; give "
+                                 "multi-component data as a 2-D array with one row per %s"
+                                 % (label, tuple_word, arr.size, ntuples, tuple_word, tuple_word))
+            ncomp = 1
+        elif ntuples:
+            if arr.size % ntuples:
+                raise ValueError("%s has %d values, which is not a multiple of %d %ss"
+                                 % (label, arr.size, ntuples, tuple_word))
+            ncomp = arr.size // ntuples
+        else:
+            ncomp = 1
+        dtype_str = _INFERRED_TYPE.get(ncomp)
+        if dtype_str is None:
+            raise ValueError("%s has %d components per tuple; give the type explicitly, "
+                             "e.g. ('tcoords', array), or pad 2-D vectors to 3 components"
+                             % (label, ncomp))
+        if dtype_str not in allowed:
+            raise ValueError("%s has %d components (%s), which are not allowed here; use one of %s"
+                             % (label, ncomp, dtype_str, ", ".join(repr(t) for t in allowed)))
+
+    if arr.ndim == 3 and grid is not None and dtype_str == "scalars":
+        if arr.shape != grid:
+            raise ValueError("%s has shape %s, expected %s" % (label, arr.shape, grid))
+    ncomp = _NCOMP[dtype_str]
+    if ncomp_shape is not None and ncomp is not None and ncomp_shape != ncomp:
+        raise ValueError("%s has %d component%s per %s, but %s have %d"
+                         % (label, ncomp_shape, "" if ncomp_shape == 1 else "s", tuple_word,
+                            dtype_str, ncomp))
+    if ncomp is None: # tcoords: 1, 2 or 3 components
+        if ncomp_shape is not None:
+            ncomp = ncomp_shape
+        else:
+            ncomp = arr.size // ntuples if ntuples > 0 else 0
+        if ncomp not in (1, 2, 3) or ncomp * ntuples != arr.size:
+            raise ValueError("%s (tcoords) has %d values; expected 1, 2 or 3 per tuple "
+                             "for %d tuples" % (label, arr.size, ntuples))
+    elif arr.size != ncomp * ntuples:
+        raise ValueError("%s has %d values, expected %d (%d %ss x %d component%s)"
+                         % (label, arr.size, ncomp * ntuples, ntuples, tuple_word, ncomp,
+                            "" if ncomp == 1 else "s"))
+    return [name, dtype_str, arr, ncomp]
+
+def _check_fields(fields, where, ntuples, allowed = _ALL_TYPES, shape3d = None, legacy = False):
+    """ Check point or cell data and return a NEW list of [name, type, data_array, ncomp]
+        (the caller's data are not modified).
+
+        fields:  a dictionary {name: array} or {name: (type, array)}, or a list of
+                 [name, type, array] entries.  Without a type, the type follows from the
+                 number of components: 1 scalars, 3 vectors, 9 tensors.  An array may be
+                   * 1-D: one value per tuple, or the components interleaved (x0 y0 z0 x1 ...);
+                   * 2-D with one row per point/cell, e.g. (npoints, 3);
+                   * with shape3d: of shape shape3d (scalars), or shape3d + (k,) for k
+                     components, indexed [i, j, k, component];
+                   * other 3-D arrays: taken in Fortran order (as before).
+        where:   "all_cell_data", "all_point_data", ... (used in error messages).
+        ntuples: number of cells or points the data must cover.
+        shape3d: the grid shape (nx, ny, nz) of a structured, rectilinear or image grid.
+        legacy:  only the list form with 1-D and 3-D arrays, as before 0.1.0 (used by
+                 timeseries_unstructuredGrid).
+    """
+    checked = []
+    names = set()
+    for name, dtype_str, data in _field_entries(fields, where, dicts = not legacy):
         if name in names:
             raise ValueError("%s: the name '%s' is used twice" % (where, name))
         names.add(name)
-        if dtype_str not in allowed:
-            raise ValueError("%s['%s']: type %r is not allowed here; use one of %s"
-                             % (where, name, dtype_str, ", ".join(repr(t) for t in allowed)))
-        arr = _to_array("%s['%s']" % (where, name), data, bool_to_uint8 = True)
-        if arr.ndim not in (1, 3):
-            raise ValueError("%s['%s'] must be a 1-D array%s, got shape %s"
-                             % (where, name,
-                                " (or a 3-D array of shape %s for scalars)" % (tuple(shape3d),)
-                                if shape3d is not None else "", arr.shape))
-        if arr.ndim == 3 and shape3d is not None and dtype_str == "scalars":
-            if tuple(arr.shape) != tuple(shape3d):
-                raise ValueError("%s['%s'] has shape %s, expected %s"
-                                 % (where, name, arr.shape, tuple(shape3d)))
-        ncomp = _NCOMP[dtype_str]
-        if ncomp is None: # tcoords: 1, 2 or 3 components
-            ncomp = arr.size // ntuples if ntuples > 0 else 0
-            if ncomp not in (1, 2, 3) or ncomp * ntuples != arr.size:
-                raise ValueError("%s['%s'] (tcoords) has %d values; expected 1, 2 or 3 per tuple "
-                                 "for %d tuples" % (where, name, arr.size, ntuples))
-        elif arr.size != ncomp * ntuples:
-            raise ValueError("%s['%s'] has %d values, expected %d (%d %s x %d component%s)"
-                             % (where, name, arr.size, ncomp * ntuples, ntuples,
-                                "cells" if "cell" in where else "points", ncomp,
-                                "" if ncomp == 1 else "s"))
-        checked.append([name, dtype_str, arr, ncomp])
+        checked.append(_check_field(where, name, dtype_str, data, ntuples, allowed, shape3d,
+                                    rows = not legacy))
     return checked
+
+def _concat_fields(where, *field_lists):
+    """ Join lists returned by _check_fields; names must not repeat. """
+    joined, names = [], set()
+    for fields in field_lists:
+        for f in fields:
+            if f[0] in names:
+                raise ValueError("%s: the name '%s' is used twice" % (where, f[0]))
+            names.add(f[0])
+            joined.append(f)
+    return joined
 
 def _check_comments(comments):
     if comments is None:
@@ -349,20 +562,26 @@ def imageToVTK(path, origin = (0.0,0.0,0.0), spacing = (1.0,1.0,1.0), all_cell_d
             origin: grid origin (default = (0,0,0))
             spacing: grid spacing (default = (1,1,1))
             
-            all_cell_data: A List of Lists.  It has this format:
+            all_cell_data: data on the cells: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_cell_data[ii] = cellData, where
                     cellData is a List (of length 3) that defines a variable associated with the grid cells:
                         cellData[0] = the *name* of the variable stored;
-                        cellData[1] = the *type* of the variable, only "scalars" is allowed here.
-                        cellData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        cellData[1] = the *type* of the variable, only "scalars" and "vectors" are allowed here.
+                        cellData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                      cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_cell_data" must have the same number of elements (number of cells).
                     Note: the length of "all_cell_data" is the number of variables (defined on cells).
-            all_point_data: A List of Lists.  It has this format:
+            all_point_data: data at the points: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_point_data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
-                        pointData[1] = the *type* of the variable, only "scalars" is allowed here.
-                        pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        pointData[1] = the *type* of the variable, only "scalars" and "vectors" are allowed here.
+                        pointData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                       cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
                     Note: the length of "all_point_data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
@@ -383,14 +602,19 @@ def imageToVTK(path, origin = (0.0,0.0,0.0), spacing = (1.0,1.0,1.0), all_cell_d
     # Extract dimensions (from 3-D arrays)
     start = (0,0,0)
     def _first_shape(fields, where):
-        if not fields:
+        entries = _field_entries(fields, where)
+        if not entries:
             return None
-        entry = fields[0]
-        if not isinstance(entry, (list, tuple)) or len(entry) != 3:
-            raise TypeError("%s[0] must be a list [name, type, data]" % where)
-        arr = _to_array("%s[0]" % where, entry[2], bool_to_uint8 = True)
+        name, _, data = entries[0]
+        label = "%s['%s']" % (where, name)
+        _reject_component_sequence(label, data, grid = True)
+        arr = _to_array(label, data, bool_to_uint8 = True)
+        if arr.ndim == 4:               # (nx, ny, nz, k): k components
+            return tuple(arr.shape[:3])
         if arr.ndim != 3:
-            raise ValueError("imageToVTK needs 3-D arrays; %s[0] has shape %s" % (where, arr.shape))
+            raise ValueError("imageToVTK needs 3-D arrays (or (nx, ny, nz, k) arrays for k "
+                             "components) to find the image size; %s has shape %s"
+                             % (label, arr.shape))
         return tuple(arr.shape)
     cshape = _first_shape(all_cell_data, "all_cell_data")
     pshape = _first_shape(all_point_data, "all_point_data")
@@ -409,8 +633,10 @@ def imageToVTK(path, origin = (0.0,0.0,0.0), spacing = (1.0,1.0,1.0), all_cell_d
         raise ValueError("invalid image size: point shape %s" % (point_shape,))
     ncells = int(np.prod(cell_shape)); npoints = int(np.prod(point_shape))
 
-    cell_fields = _check_fields(all_cell_data, "all_cell_data", ncells, ("scalars",), cell_shape)
-    point_fields = _check_fields(all_point_data, "all_point_data", npoints, ("scalars",), point_shape)
+    cell_fields = _check_fields(all_cell_data, "all_cell_data", ncells, ("scalars", "vectors"),
+                                cell_shape)
+    point_fields = _check_fields(all_point_data, "all_point_data", npoints, ("scalars", "vectors"),
+                                 point_shape)
     comments = _check_comments(comments)
 
     # Write data to file
@@ -435,20 +661,26 @@ def rectilinearToVTK(path, x, y, z, all_cell_data = None, all_point_data = None,
                      The grid should be Cartesian, i.e. faces in all cells are orthogonal.
                      Arrays size should be equal to the number of nodes of the grid in each direction.
 
-            all_cell_data: A List of Lists.  It has this format:
+            all_cell_data: data on the cells: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_cell_data[ii] = cellData, where
                     cellData is a List (of length 3) that defines a variable associated with the grid cells:
                         cellData[0] = the *name* of the variable stored;
-                        cellData[1] = the *type* of the variable, only "scalars" is allowed here.
-                        cellData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        cellData[1] = the *type* of the variable, only "scalars" and "vectors" are allowed here.
+                        cellData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                      cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_cell_data" must have the same number of elements (number of cells).
                     Note: the length of "all_cell_data" is the number of variables (defined on cells).
-            all_point_data: A List of Lists.  It has this format:
+            all_point_data: data at the points: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_point_data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
-                        pointData[1] = the *type* of the variable, only "scalars" is allowed here.
-                        pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        pointData[1] = the *type* of the variable, only "scalars" and "vectors" are allowed here.
+                        pointData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                       cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
                     Note: the length of "all_point_data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
@@ -468,9 +700,9 @@ def rectilinearToVTK(path, x, y, z, all_cell_data = None, all_point_data = None,
 
     cell_shape = _cells_per_direction((x.size, y.size, z.size))
     cell_fields = _check_fields(all_cell_data, "all_cell_data", int(np.prod(cell_shape)),
-                                ("scalars",), cell_shape)
+                                ("scalars", "vectors"), cell_shape)
     point_fields = _check_fields(all_point_data, "all_point_data", x.size * y.size * z.size,
-                                 ("scalars",), (x.size, y.size, z.size))
+                                 ("scalars", "vectors"), (x.size, y.size, z.size))
     comments = _check_comments(comments)
 
     with VtkFile(path, ftype) as w:
@@ -494,7 +726,8 @@ def rectilinearToVTK(path, x, y, z, all_cell_data = None, all_point_data = None,
     return w.getFileName()
 
 
-def structuredToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comments = None):
+def structuredToVTK(path, x = None, y = None, z = None, all_cell_data = None, all_point_data = None,
+                    comments = None, *, points = None):
     """
         Writes data values as a rectilinear or rectangular grid.
 
@@ -503,20 +736,28 @@ def structuredToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, 
             x, y, z: coordinates of the nodes of the grid as 3D arrays.
                      The grid should be structured, i.e. all cells should have the same number of neighbors.
                      Arrays size in each dimension should be equal to the number of nodes of the grid in each direction.
-            all_cell_data: A List of Lists.  It has this format:
+            points: (keyword only) the points as one array of shape (nx, ny, nz, 3), or
+                    (nx, ny, nz, 2) for z = 0, instead of x, y, z: points[i, j, k] is point (i, j, k).
+            all_cell_data: data on the cells: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_cell_data[ii] = cellData, where
                     cellData is a List (of length 3) that defines a variable associated with the grid cells:
                         cellData[0] = the *name* of the variable stored;
-                        cellData[1] = the *type* of the variable, only "scalars" and "vectors" allowed here.
-                        cellData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        cellData[1] = the *type* of the variable, only "scalars" and "vectors" are allowed here.
+                        cellData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                      cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_cell_data" must have the same number of elements (number of cells).
                     Note: the length of "all_cell_data" is the number of variables (defined on cells).
-            all_point_data: A List of Lists.  It has this format:
+            all_point_data: data at the points: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_point_data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
-                        pointData[1] = the *type* of the variable, only "scalars" and "vectors" allowed here.
-                        pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        pointData[1] = the *type* of the variable, only "scalars" and "vectors" are allowed here.
+                        pointData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                       cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
                     Note: the length of "all_point_data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
@@ -525,6 +766,7 @@ def structuredToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, 
             Full path to saved file.
 
     """
+    x, y, z = _xyz_or_points(x, y, z, points, grid = True)
     x, y, z = (_to_array("x", x), _to_array("y", y), _to_array("z", z))
     if not (x.ndim == 3 and y.ndim == 3 and z.ndim == 3):
         raise ValueError("x, y, z must be 3-D arrays, got shapes %s, %s, %s"
@@ -639,19 +881,25 @@ def structuredToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, 
     # return w.getFileName()
 
 # ==============================================================================
-def pointsToVTK(path, x, y, z, all_point_data = None, comments = None ):
+def pointsToVTK(path, x = None, y = None, z = None, all_point_data = None, comments = None, *,
+                points = None):
     """
         Export points and associated data as an unstructured grid.
 
         PARAMETERS:
             path: name of the file without extension where data should be saved.
             x, y, z: 1D list-type object (list, tuple or numpy) with coordinates of the points.
-            all_point_data: A List of Lists.  It has this format:
+            points: (keyword only) the points as one array of shape (n, 3), or (n, 2) for
+                    z = 0, instead of x, y, z.
+            all_point_data: data at the points: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_point_data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
                         pointData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                        pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        pointData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                       cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
                     Note: the length of "all_point_data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
@@ -660,7 +908,7 @@ def pointsToVTK(path, x, y, z, all_point_data = None, comments = None ):
             Full path to saved file.
 
     """
-    x, y, z = _check_xyz(x, y, z)
+    x, y, z = _check_xyz(*_xyz_or_points(x, y, z, points))
     npoints = x.size
     point_fields = _check_fields(all_point_data, "all_point_data", npoints)
     comments = _check_comments(comments)
@@ -676,7 +924,8 @@ def pointsToVTK(path, x, y, z, all_point_data = None, comments = None ):
                                [], point_fields, comments)
 
 # ==============================================================================
-def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
+def pointsToVTKAsTIN(path, x = None, y = None, z = None, data = None, comments = None, ndim = 2, *,
+                     points = None):
     """
         Export points and associated data as a triangular irregular grid.
         It builds a triangular grid that has the input points as nodes
@@ -687,13 +936,18 @@ def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
         PARAMETERS:
             path: name of the file without extension where data should be saved.
             x, y, z: 1D list-type object (list, tuple or numpy) with coordinates of the points.
+            points: (keyword only) the points as one array of shape (n, 3), or (n, 2) for
+                    z = 0, instead of x, y, z.
             data: additional point data (optional), written after the "Elevation" array
-                  (which holds z).  A List of Lists.  It has this format:
+                  (which holds z): a dictionary {name: array} or {name: (type, array)} (see
+                  "Point and cell data" at the top of this module), or (older form) a List of
+                  Lists with this format:
                     data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
                         pointData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                        pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        pointData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                       cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "data" must have the same number of elements (number of vertices).
                     Note: the length of "data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
@@ -714,10 +968,10 @@ def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
 
     if ndim not in (2, 3):
         raise ValueError("ndim must be 2 or 3, got %r" % (ndim,))
-    x, y, z = _check_xyz(x, y, z)
+    x, y, z = _check_xyz(*_xyz_or_points(x, y, z, points))
     npts = x.size
-    point_fields = _check_fields([["Elevation", "scalars", z]] + list(data or []),
-                                 "data", npts)
+    point_fields = _concat_fields("data", _check_fields([["Elevation", "scalars", z]], "data", npts),
+                                  _check_fields(data, "data", npts))
     comments = _check_comments(comments)
 
     # Delaunay triangulation (ndim = 2) or tetrahedralization (ndim = 3)
@@ -734,7 +988,8 @@ def pointsToVTKAsTIN(path, x, y, z, data = None, comments = None, ndim = 2):
                                [], point_fields, comments)
 
 # ==============================================================================
-def linesToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comments = None ):
+def linesToVTK(path, x = None, y = None, z = None, all_cell_data = None, all_point_data = None,
+               comments = None, *, points = None):
     """
         Export line segments that join 2 points and associated data.
 
@@ -743,20 +998,28 @@ def linesToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comme
             x, y, z: 1D list-type object (list, tuple or numpy) with coordinates of the vertex of the lines. It is assumed that each line.
                      is defined by two points, then the length of the arrays should be equal to 2 * number of lines.
                      So each consecutive pair of points is a line.
-            all_cell_data: A List of Lists.  It has this format:
+            points: (keyword only) the points as one array of shape (n, 3), or (n, 2) for
+                    z = 0, instead of x, y, z.
+            all_cell_data: data on the cells: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_cell_data[ii] = cellData, where
                     cellData is a List (of length 3) that defines a variable associated with the grid cells:
                         cellData[0] = the *name* of the variable stored;
                         cellData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                        cellData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        cellData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                      cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_cell_data" must have the same number of elements (number of cells).
                     Note: the length of "all_cell_data" is the number of variables (defined on cells).
-            all_point_data: A List of Lists.  It has this format:
+            all_point_data: data at the points: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_point_data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
                         pointData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                        pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        pointData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                       cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
                     Note: the length of "all_point_data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
@@ -765,7 +1028,7 @@ def linesToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comme
             Full path to saved file.
 
     """
-    x, y, z = _check_xyz(x, y, z)
+    x, y, z = _check_xyz(*_xyz_or_points(x, y, z, points))
     if x.size % 2 != 0:
         raise ValueError("linesToVTK needs an even number of points (2 per line), got %d" % x.size)
 
@@ -785,7 +1048,8 @@ def linesToVTK(path, x, y, z, all_cell_data = None, all_point_data = None, comme
                                cell_fields, point_fields, comments)
 
 # ==============================================================================
-def polyLinesToVTK(path, x, y, z, pointsPerLine, all_cell_data = None, all_point_data = None, comments = None ):
+def polyLinesToVTK(path, x = None, y = None, z = None, pointsPerLine = None, all_cell_data = None,
+                   all_point_data = None, comments = None, *, points = None):
     """
         Export line segments that joint 2 points and associated data.
 
@@ -797,20 +1061,28 @@ def polyLinesToVTK(path, x, y, z, pointsPerLine, all_cell_data = None, all_point
                            the length of this array defines the number of lines. It also implicitly 
                            defines the connectivity or topology of the set of lines. It is assumed 
                            that points that define a line are consecutive in the x, y and z arrays.
-            all_cell_data: A List of Lists.  It has this format:
+            points: (keyword only) the points as one array of shape (n, 3), or (n, 2) for
+                    z = 0, instead of x, y, z.
+            all_cell_data: data on the cells: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_cell_data[ii] = cellData, where
                     cellData is a List (of length 3) that defines a variable associated with the grid cells:
                         cellData[0] = the *name* of the variable stored;
                         cellData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                        cellData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        cellData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                      cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_cell_data" must have the same number of elements (number of cells).
                     Note: the length of "all_cell_data" is the number of variables (defined on cells).
-            all_point_data: A List of Lists.  It has this format:
+            all_point_data: data at the points: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_point_data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
                         pointData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                        pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        pointData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                       cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
                     Note: the length of "all_point_data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
@@ -819,7 +1091,8 @@ def polyLinesToVTK(path, x, y, z, pointsPerLine, all_cell_data = None, all_point
             Full path to saved file.
 
     """
-    x, y, z = _check_xyz(x, y, z)
+    x, y, z = _check_xyz(*_xyz_or_points(x, y, z, points))
+    _require("polyLinesToVTK", pointsPerLine = pointsPerLine)
     pointsPerLine = _to_vector("pointsPerLine", pointsPerLine)
 
     npoints = len(x)
@@ -844,8 +1117,9 @@ def polyLinesToVTK(path, x, y, z, pointsPerLine, all_cell_data = None, all_point
     return _write_unstructured(path, x, y, z, connectivity, offsets, cell_types,
                                cell_fields, point_fields, comments)
 
-def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, all_cell_data = None, all_point_data = None, \
-                      comments = None):
+def unstructuredGridToVTK(path, x = None, y = None, z = None, connectivity = None, offsets = None,
+                          cell_types = None, all_cell_data = None, all_point_data = None,
+                          comments = None, *, points = None):
     """
         Export unstructured grid and associated data.
 
@@ -859,22 +1133,30 @@ def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, all_
             offsets: 1D list-type object (list, tuple or numpy) with the index of the last vertex of each element in the connectivity array.
                      It should have length nelem, where nelem is the number of cells or elements in the grid.
             cell_types: 1D list-type object (list, tuple or numpy) with an integer that defines the cell type of each element in the grid.
-                        It should have size nelem. This should be assigned from pyvtk.vtkbin.VtkXXXX.tid, where XXXX represents
+                        It should have size nelem. This should be assigned from VTKwrite.VtkXXXX.tid, where XXXX represents
                         the type of cell. Please check the VTK file format specification for allowed cell types.                       
-            all_cell_data: A List of Lists.  It has this format:
+            points: (keyword only) the points as one array of shape (n, 3), or (n, 2) for
+                    z = 0, instead of x, y, z.
+            all_cell_data: data on the cells: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_cell_data[ii] = cellData, where
                     cellData is a List (of length 3) that defines a variable associated with the grid cells:
                         cellData[0] = the *name* of the variable stored;
                         cellData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                        cellData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        cellData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                      cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_cell_data" must have the same number of elements (number of cells).
                     Note: the length of "all_cell_data" is the number of variables (defined on cells).
-            all_point_data: A List of Lists.  It has this format:
+            all_point_data: data at the points: a dictionary {name: array} or {name: (type, array)}
+                    (see "Point and cell data" at the top of this module), or (older form) a
+                    List of Lists with this format:
                     all_point_data[ii] = pointData, where
                     pointData is a List (of length 3) that defines a variable associated with the grid vertices:
                         pointData[0] = the *name* of the variable stored;
                         pointData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                        pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
+                        pointData[2] = the data array itself (list, tuple or numpy array; see "Point and
+                                       cell data" at the top of this module for the accepted shapes).
                     Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
                     Note: the length of "all_point_data" is the number of variables (defined on vertices).
             comments: list of comment strings, which will be added to the header section of the file.
@@ -883,7 +1165,9 @@ def unstructuredGridToVTK(path, x, y, z, connectivity, offsets, cell_types, all_
             Full path to saved file.
 
     """
-    x, y, z = _check_xyz(x, y, z)
+    x, y, z = _check_xyz(*_xyz_or_points(x, y, z, points))
+    _require("unstructuredGridToVTK", connectivity = connectivity, offsets = offsets,
+             cell_types = cell_types)
     npoints = x.size
     connectivity, offsets, cell_types = _check_topology(connectivity, offsets, cell_types, npoints)
     ncells = cell_types.size
@@ -909,10 +1193,10 @@ def cylinderToVTK(path, x0, y0, z0, z1, radius, nlayers, npilars = 16, all_cell_
         nlayers: Number of layers in z direction to divide the cylinder.
         npilars: Number of points around the circumference of the cylinder.
                  Higher value gives higher resolution to represent the curved shape.
-        all_cell_data: A List of Lists, as in unstructuredGridToVTK, for the
+        all_cell_data: a dictionary or a List of Lists, as in unstructuredGridToVTK, for the
                   ncells = npilars * nlayers quads.  Cell k * npilars + p is the quad between
                   pillars p and p+1 (counted counter-clockwise from the x-axis) in layer k.
-        all_point_data: A List of Lists, as in unstructuredGridToVTK, for the
+        all_point_data: a dictionary or a List of Lists, as in unstructuredGridToVTK, for the
                   npoints = npilars * (nlayers + 1) points.  Point k * npilars + p is at
                   angle 2*pi*p/npilars and height level k.
         comments: list of comment strings, which will be added to the header section of the file.
@@ -947,24 +1231,29 @@ def cylinderToVTK(path, x0, y0, z0, z1, radius, nlayers, npilars = 16, all_cell_
     offsets = np.arange(1, ncells + 1, dtype = np.int64) * 4
     ctype = np.full(ncells, VtkQuad.tid, dtype = np.uint8)
 
-    # the older positional form passed dictionaries in these two places
-    if isinstance(all_cell_data, dict) and cellData is None:
-        all_cell_data, cellData = None, all_cell_data
-    if isinstance(all_point_data, dict) and pointData is None:
-        all_point_data, pointData = None, all_point_data
-
-    def _dict_to_fields(d, where):
+    # cellData / pointData (older form): dictionaries {name: array} of scalars.  (The older
+    # positional form passed such dictionaries as all_cell_data / all_point_data; they are
+    # now read like any field dictionary, which gives the same for scalar arrays.)
+    def _old_scalars(d, where):
         if d is None:
-            return []
+            return None
         if not isinstance(d, dict):
             raise TypeError("%s must be a dictionary {name: array}" % where)
         return [[name, "scalars", arr] for name, arr in d.items()]
-    all_cell_data = list(all_cell_data or []) + _dict_to_fields(cellData, "cellData")
-    all_point_data = list(all_point_data or []) + _dict_to_fields(pointData, "pointData")
+    npoints = npilars * (nlayers + 1)
+    cell_fields = _concat_fields("all_cell_data",
+                                 _check_fields(all_cell_data, "all_cell_data", ncells),
+                                 _check_fields(_old_scalars(cellData, "cellData"), "cellData", ncells))
+    point_fields = _concat_fields("all_point_data",
+                                  _check_fields(all_point_data, "all_point_data", npoints),
+                                  _check_fields(_old_scalars(pointData, "pointData"), "pointData",
+                                                npoints))
 
     return unstructuredGridToVTK(path, xx, yy, zz, connectivity = conn, offsets = offsets,
-                                 cell_types = ctype, all_cell_data = all_cell_data or None,
-                                 all_point_data = all_point_data or None, comments = comments)
+                                 cell_types = ctype,
+                                 all_cell_data = [f[:3] for f in cell_fields] or None,
+                                 all_point_data = [f[:3] for f in point_fields] or None,
+                                 comments = comments)
 
 # =================================
 #  time-series on unstructuredGrid
@@ -1028,7 +1317,7 @@ class timeseries_unstructuredGrid:
                 offsets: 1D list-type object (list, tuple or numpy) with the index of the last vertex of each element in the connectivity array.
                          It should have length nelem, where nelem is the number of cells or elements in the grid.
                 cell_types: 1D list-type object (list, tuple or numpy) with an integer that defines the cell type of each element in the grid.
-                            It should have size nelem. This should be assigned from pyvtk.vtkbin.VtkXXXX.tid, where XXXX represents
+                            It should have size nelem. This should be assigned from VTKwrite.VtkXXXX.tid, where XXXX represents
                             the type of cell. Please check the VTK file format specification for allowed cell types.                       
                 all_cell_data: A List of Lists.  It has this format:
                         all_cell_data[ii] = cellData, where
@@ -1059,8 +1348,8 @@ class timeseries_unstructuredGrid:
         connectivity, offsets, cell_types = _check_topology(connectivity, offsets, cell_types, npoints)
         ncells = cell_types.size
 
-        cell_fields = _check_fields(all_cell_data, "all_cell_data", ncells)
-        point_fields = _check_fields(all_point_data, "all_point_data", npoints)
+        cell_fields = _check_fields(all_cell_data, "all_cell_data", ncells, legacy = True)
+        point_fields = _check_fields(all_point_data, "all_point_data", npoints, legacy = True)
         comments = _check_comments(comments)
 
         self._expected = ([("cell", f[0], f[2].dtype, f[2].size) for f in cell_fields] +
@@ -1195,40 +1484,14 @@ class timeseries_unstructuredGrid:
 # =================================
 #  Streaming time series: one .vtu file, or a .pvd file with one .vtu per step
 # =================================
-_INFERRED_TYPE = {1 : "scalars", 3 : "vectors", 9 : "tensors"}
-
 def _step_field(where, name, value, ntuples):
-    """ Check one field given as an array, or as (type, array).  A 2-D array with one
-        row per point/cell, e.g. shape (n, 3), is accepted for multi-component data.
+    """ One field of a time step (TimeSeriesUnstructuredGrid): an array, or (type, array),
+        1-D or 2-D with one row per point/cell (no 3-D arrays).
         Returns [name, type, flat array, ncomp] (the format used by _check_fields). """
     if not isinstance(name, str) or not name:
         raise TypeError("%s: field names must be non-empty strings, got %r" % (where, name))
-    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
-        dtype_str, data = value
-    else:
-        dtype_str, data = None, value
-    if isinstance(data, (list, tuple)) and data and isinstance(data[0], (np.ndarray, list, tuple)):
-        raise TypeError("%s['%s']: give multi-component data as one array with one row per "
-                        "point/cell, e.g. np.column_stack((vx, vy, vz)), not as a %s of arrays"
-                        % (where, name, type(data).__name__))
-    arr = _to_array("%s['%s']" % (where, name), data, bool_to_uint8 = True)
-    if arr.ndim == 2 and arr.shape[0] == ntuples:
-        arr = np.ascontiguousarray(arr).reshape(-1)     # rows are tuples: x0 y0 z0 x1 ...
-    elif arr.ndim != 1:
-        raise ValueError("%s['%s'] must be 1-D, or 2-D with one row per %s; got shape %s"
-                         % (where, name, "cell" if "cell" in where else "point", arr.shape))
-    if dtype_str is None:
-        ncomp = arr.size // ntuples if ntuples else 1
-        if ntuples and arr.size % ntuples:
-            raise ValueError("%s['%s'] has %d values, which is not a multiple of %d %s"
-                             % (where, name, arr.size, ntuples,
-                                "cells" if "cell" in where else "points"))
-        dtype_str = _INFERRED_TYPE.get(ncomp)
-        if dtype_str is None:
-            raise ValueError("%s['%s'] has %d components per tuple; give the type explicitly, "
-                             "e.g. ('tcoords', array), or pad 2-D vectors to 3 components"
-                             % (where, name, ncomp))
-    return _check_fields([[name, dtype_str, arr]], where, ntuples)[0]
+    dtype_str, data = _split_typed(value)
+    return _check_field(where, name, dtype_str, data, ntuples, nd3 = False)
 
 def _block_size(arr):
     """ Bytes taken by an array in the appended section (8-byte size header + data). """
@@ -1291,6 +1554,8 @@ class TimeSeriesUnstructuredGrid:
     PARAMETERS:
         path: file name without extension.
         x, y, z, connectivity, offsets, cell_types: the mesh, as in unstructuredGridToVTK.
+        points: (keyword only) the points as one array of shape (n, 3), or (n, 2) for z = 0,
+               instead of x, y, z; then give connectivity etc. by keyword.
         times: the time values (strictly increasing), if known in advance.  Then exactly
                this many steps must be written, and write_step(time) may omit the time.
         output: "vtu" (one .vtu file), "vtkhdf" (one .vtkhdf file) or "pvd" (one .vtu file
@@ -1303,9 +1568,10 @@ class TimeSeriesUnstructuredGrid:
                no such file, or a file name without extension.
     """
 
-    def __init__(self, path, x, y, z, connectivity, offsets, cell_types, times = None,
-                 output = "vtu", static_point_data = None, static_cell_data = None,
-                 comments = None, time_values_file = True):
+    def __init__(self, path, x = None, y = None, z = None, connectivity = None, offsets = None,
+                 cell_types = None, times = None, output = "vtu", static_point_data = None,
+                 static_cell_data = None, comments = None, time_values_file = True, *,
+                 points = None):
         if output not in ("vtu", "vtkhdf", "pvd"):
             raise ValueError("output must be 'vtu', 'vtkhdf' or 'pvd', got %r" % (output,))
         self.path = str(path)
@@ -1317,7 +1583,9 @@ class TimeSeriesUnstructuredGrid:
                 raise ImportError("output = 'vtkhdf' needs the h5py package; "
                                   "install it with 'pip install h5py'") from None
             self._h5py = h5py
-        x, y, z = _check_xyz(x, y, z)
+        x, y, z = _check_xyz(*_xyz_or_points(x, y, z, points))
+        _require("TimeSeriesUnstructuredGrid", connectivity = connectivity, offsets = offsets,
+                 cell_types = cell_types)
         connectivity, offsets, cell_types = _check_topology(connectivity, offsets, cell_types,
                                                             x.size)
         self._mesh = (x, y, z, connectivity, offsets, cell_types)

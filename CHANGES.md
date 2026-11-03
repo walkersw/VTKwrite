@@ -94,4 +94,19 @@ Package namespace (review section 6):
 - `VTKwrite.interface` imports the names it needs from `vtkbin` explicitly, instead of `from .vtkbin import *`. Every name that could be imported from `VTKwrite.interface` before still can, except the modules `sys` and `numbers`.
 - New tests: `tests/test_namespace.py` (exports, version, old import paths, cell type ids against VTK's constants) and `tests/test_bool_data.py`.
 
-Still open (see the review): (n, 3) arrays and dictionaries for the other writers, FEM cell types (quadratic wedge/pyramid, Lagrange cells), a .vtp writer, and compression.
+Friendlier array input (review section 6):
+
+- Every writer accepts point and cell data as a dictionary, as `TimeSeriesUnstructuredGrid` does: `all_point_data={"u": u, "grad_u": G}`. The type follows from the number of components per point or cell (1: scalars, 3: vectors, 9: tensors), or is given as `{name: (type, array)}`. The order of the dictionary is the order in the file. This covers `unstructuredGridToVTK`, `pointsToVTK`, `pointsToVTKAsTIN` (`data`), `linesToVTK`, `polyLinesToVTK`, `cylinderToVTK`, `imageToVTK`, `rectilinearToVTK` and `structuredToVTK`. The list form `[name, type, array]` still works.
+- Multi-component data may have one row per point or cell, e.g. shape `(npoints, 3)`, in both forms. Before, it had to be interleaved by hand into a 1-D array.
+- Structured, rectilinear and image grids accept arrays of shape `(nx, ny, nz, k)` for k components, indexed `[i, j, k, component]`. The order VTK expects (component fastest, then i, j, k) is produced internally; before, it had to be done by hand, as in `examples/structured_ex1.py`.
+- `imageToVTK` and `rectilinearToVTK` accept vectors, like `structuredToVTK`. Before, they accepted scalars only.
+- The points can be given as one array with the keyword `points=`: shape `(n, 3)`, or `(n, 2)` for z = 0, in `unstructuredGridToVTK`, `pointsToVTK`, `pointsToVTKAsTIN`, `linesToVTK`, `polyLinesToVTK` and `TimeSeriesUnstructuredGrid`; `(nx, ny, nz, 3)` or `(nx, ny, nz, 2)` in `structuredToVTK`. So that existing positional calls keep working, `x, y, z` and the arguments after them now default to `None`. A missing argument still raises `TypeError`, which names it.
+- The new forms give byte-for-byte the same files as the older ones; this is tested for every writer and for all three time-series outputs. Writing is as fast as before and needs no more memory (10^6 points and 10^6 tetrahedra: 0.09 s and 23 MB extra in every form), because the XML writers no longer copy the columns of a points array.
+- Multi-component data given as a list or tuple of arrays, e.g. `(vx, vy, vz)`, raises `TypeError` with a hint (`np.column_stack`) in all writers, as it already did in `TimeSeriesUnstructuredGrid`: with 3 points it could not be told apart from 3 rows. (In the list form it was a `ValueError` before.)
+- In a dictionary, a 3-D array that does not have the grid's shape must hold one value per point or cell; it is read in Fortran order, as in the list form.
+- `cylinderToVTK`: dictionaries given as `all_cell_data`/`all_point_data` are read like any field dictionary, which gives the same files as before for scalar data. `cellData`/`pointData` are unchanged.
+- `timeseries_unstructuredGrid` is unchanged: it still takes only the list form with 1-D arrays (it is to be deprecated).
+- New example `examples/array_input.py`: a thick-walled cylinder with its displacement and stress tensor, written as an unstructured and as a structured grid. The README has a new section on these forms, and the module docstring of `VTKwrite.interface` describes them in full.
+- New tests in `tests/test_array_input.py`. The structured, rectilinear and image grids are checked entry by entry with VTK's own (i, j, k) to id functions.
+
+Still open (see the review): FEM cell types (quadratic wedge/pyramid, Lagrange cells), a .vtp writer, and compression.

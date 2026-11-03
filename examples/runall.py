@@ -1,5 +1,6 @@
 import shutil
 
+import array_input
 import group
 import image
 import lines
@@ -20,6 +21,7 @@ def testit(test):
         print("  FAILED")
 
 def clean_all():
+    array_input.clean()
     group.clean()
     image.clean()
     lines.clean()
@@ -38,6 +40,7 @@ def clean_all():
         pass
     
 def test_all():
+    testit(array_input.run)
     testit(group.run)
     testit(image.run)
     testit(lines.run)
