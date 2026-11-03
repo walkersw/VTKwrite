@@ -12,7 +12,7 @@ https://github.com/paulo-herrera/PyEVTK
 
 - You need Python 3.10 or better, and NumPy.
 
-- Compatibility: the generated files can be read by Paraview versions: 5.4, 5.5, 5.6, 5.7, AND 5.11.  I added a time-dependent .vtu file example to the unit tests of Paraview, so it should keep working in the future.
+- Compatibility: the tests write files and read them back with VTK's own readers. They pass with VTK 9.5.2 and 9.7.1, and with VTK 9.2.6 except for time-dependent `.vtkhdf` files, which that version cannot read (VTK 9.4 and later can). Earlier versions of this package were checked with ParaView 5.4, 5.5, 5.6, 5.7 and 5.11. Single-file `.vtu` time series are not read correctly by VTK 9.6 and later (ParaView 6.1 and later); see [the known issue](#known-issue-single-file-vtu-time-series-in-vtk-96--paraview-61-and-later) below.
 
 ## Installation
 

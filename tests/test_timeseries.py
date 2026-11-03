@@ -56,16 +56,19 @@ def test_values_per_step(tmp_path):
     assert no_leftovers(tmp_path)
 
 
-def test_values_per_step_vtk(tmp_path, vtk):
+def test_values_per_step_vtk(tmp_path, vtk, request):
     ts = start(tmp_path)
     ts.append_data([p_at(k) for k in range(3)])
     ts.append_data([u_at(k) for k in range(3)])
     ts.append_data([q_at(k) for k in range(3)])
     path = ts.close_unstructuredGridToVTK()
     version = tuple(int(v) for v in vtk.vtkVersion.GetVTKVersion().split(".")[:2])
-    if version >= (9, 6):
-        pytest.xfail("VTK >= 9.6 drops all but the first time step (upstream regression, "
-                     "see docs/VTK_timeseries_regression)")
+    # the checks below run in any case, so that a fixed VTK makes this test fail (strict)
+    request.applymarker(pytest.mark.xfail(version >= (9, 6), strict=True, reason=(
+        "VTK >= 9.6 reads only the first time step of a single-file .vtu time series "
+               "(upstream regression, VTK issue #20227). If this test passes, VTK is fixed: "
+               "turn the version check into an upper bound, and update the README section "
+               "'Known issue'")))
     for k in range(3):
         out = read_vtk(vtk, path, time_step=k)
         np.testing.assert_array_equal(vtk_array(vtk, out.GetCellData(), "p"), p_at(k))

@@ -1,6 +1,6 @@
 # Changes
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-03)
 
 Fixes for files that were silently wrong or unreadable (review section 2):
 
@@ -141,6 +141,6 @@ Deprecated:
 
 Documentation:
 
-- README: a section on `VtkGroup`, and a note on meshio. meshio 5.3.5 fails with `Incorrect padding` on many raw-appended `.vtu` files on Python 3.13 and later, including files written by VTK itself; it reads them with Python 3.12 and earlier.
+- README: a section on `VtkGroup`, and a note on meshio. The compatibility note lists the VTK versions the tests were run with. meshio 5.3.5 fails with `Incorrect padding` on many raw-appended `.vtu` files on Python 3.13 and later, including files written by VTK itself; it reads them with Python 3.12 and earlier.
 
 Still open: removing `timeseries_unstructuredGrid` in the next release. Not planned: a .vtp writer and compression.

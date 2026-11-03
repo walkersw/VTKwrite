@@ -57,11 +57,15 @@ def test_known_and_unknown_times_give_the_same_file(tmp_path):
     assert not leftovers(tmp_path)
 
 
-def test_single_vtu_read_by_vtk(tmp_path, vtk):
+def test_single_vtu_read_by_vtk(tmp_path, vtk, request):
     write_all(tmp_path / "sol")
     version = tuple(int(v) for v in vtk.vtkVersion.GetVTKVersion().split(".")[:2])
-    if version >= (9, 6):
-        pytest.xfail("VTK >= 9.6 drops all but the first time step (upstream regression)")
+    # the checks below run in any case, so that a fixed VTK makes this test fail (strict)
+    request.applymarker(pytest.mark.xfail(version >= (9, 6), strict=True, reason=(
+        "VTK >= 9.6 reads only the first time step of a single-file .vtu time series "
+               "(upstream regression, VTK issue #20227). If this test passes, VTK is fixed: "
+               "turn the version check into an upper bound, and update the README section "
+               "'Known issue'")))
     for k in range(4):
         out = read_vtk(vtk, str(tmp_path / "sol.vtu"), time_step=k)
         pd, cd = out.GetPointData(), out.GetCellData()
