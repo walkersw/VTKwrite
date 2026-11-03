@@ -11,7 +11,7 @@ import pytest
 
 from VTKwrite import (unstructuredGridToVTK, pointsToVTK, pointsToVTKAsTIN, linesToVTK,
                       polyLinesToVTK, cylinderToVTK, imageToVTK, rectilinearToVTK,
-                      structuredToVTK, TimeSeriesUnstructuredGrid, timeseries_unstructuredGrid,
+                      structuredToVTK, TimeSeriesUnstructuredGrid,
                       VtkTriangle, VtkQuad)
 from conftest import read_vtk, vtk_array, no_leftovers
 
@@ -184,19 +184,6 @@ def test_3d_arrays_still_taken_in_fortran_order(tmp_path):
     c = pointsToVTK(str(tmp_path / "c"), X, Y, Z,
                     all_point_data=[["u", "scalars", u3.ravel(order="F")]])
     assert same_files(a, b, c)
-
-
-@pytest.mark.filterwarnings("ignore:timeseries_unstructuredGrid is deprecated:DeprecationWarning")
-def test_legacy_time_series_unchanged(tmp_path):
-    """ timeseries_unstructuredGrid (to be deprecated) keeps the older input rules. """
-    ts = timeseries_unstructuredGrid(str(tmp_path / "ts"), [0.0])
-    with pytest.raises(TypeError, match="must be a list"):
-        ts.init_unstructuredGridToVTK(X, Y, Z, TOPO["connectivity"], TOPO["offsets"],
-                                      TOPO["cell_types"], all_point_data={"u": U})
-    with pytest.raises(ValueError, match="must be a 1-D array"):
-        ts.init_unstructuredGridToVTK(X, Y, Z, TOPO["connectivity"], TOPO["offsets"],
-                                      TOPO["cell_types"], all_point_data=[["q", "vectors", Q]])
-    assert os.listdir(tmp_path) == []
 
 
 # ---------------------------------------------------------------------------

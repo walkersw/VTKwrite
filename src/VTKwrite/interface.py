@@ -58,7 +58,6 @@ Copyright (c) 05-07-2021,  Shawn W. Walker
 import os
 import shutil
 import uuid
-import warnings
 
 import numpy as np
 
@@ -178,14 +177,14 @@ def _split_typed(value):
         return value
     return None, value
 
-def _field_entries(fields, where, dicts = True):
+def _field_entries(fields, where):
     """ The fields of an all_cell_data/all_point_data-type argument, as a list of
         (name, type or None, data).  Accepted: a dictionary {name: data} or
         {name: (type, data)} (type None: inferred later), or a list of [name, type, data]
-        entries.  With dicts = False only the list form is accepted (as before 0.1.0). """
+        entries. """
     if fields is None:
         return []
-    if dicts and isinstance(fields, dict):
+    if isinstance(fields, dict):
         entries = []
         for name, value in fields.items():
             if not isinstance(name, str) or not name:
@@ -194,8 +193,8 @@ def _field_entries(fields, where, dicts = True):
             entries.append((name, dtype_str, data))
         return entries
     if not isinstance(fields, (list, tuple)):
-        raise TypeError("%s must be %sa list of [name, type, data] entries"
-                        % (where, "a dictionary {name: array} or " if dicts else ""))
+        raise TypeError("%s must be a dictionary {name: array} or a list of [name, type, data] "
+                        "entries" % where)
     entries = []
     for ii, entry in enumerate(fields):
         if not isinstance(entry, (list, tuple)) or len(entry) != 3:
@@ -223,14 +222,12 @@ def _reject_component_sequence(label, data, grid = False):
                            type(data).__name__))
 
 def _check_field(where, name, dtype_str, data, ntuples, allowed = _ALL_TYPES, shape3d = None,
-                 rows = True, nd3 = True):
+                 nd3 = True):
     """ Check one field; return [name, type, data_array, ncomp].
 
         dtype_str: the type ("scalars", ...), or None to infer it from the number of
                    components: 1 scalars, 3 vectors, 9 tensors.
         shape3d:   the grid shape (nx, ny, nz) of a structured, rectilinear or image grid.
-        rows:      accept 2-D arrays with one row per point/cell, and with shape3d,
-                   (nx, ny, nz, k) arrays (False: only 1-D and 3-D arrays, as before 0.1.0).
         nd3:       accept 3-D arrays (taken in Fortran order, as the coordinates are).
 
         data_array is 1-D, or 3-D (kept as given and written in Fortran order).  2-D rows
@@ -242,28 +239,23 @@ def _check_field(where, name, dtype_str, data, ntuples, allowed = _ALL_TYPES, sh
         raise ValueError("%s: type %r is not allowed here; use one of %s"
                          % (label, dtype_str, ", ".join(repr(t) for t in allowed)))
     tuple_word = "cell" if "cell" in where else "point"
-    if rows:
-        _reject_component_sequence(label, data, grid = shape3d is not None)
+    _reject_component_sequence(label, data, grid = shape3d is not None)
     arr = _to_array(label, data, bool_to_uint8 = True)
     grid = tuple(shape3d) if shape3d is not None else None
 
     ncomp_shape = None      # number of components, if the shape says it
     if arr.ndim == 1:
         pass
-    elif rows and arr.ndim == 2 and arr.shape[0] == ntuples:
+    elif arr.ndim == 2 and arr.shape[0] == ntuples:
         ncomp_shape = arr.shape[1]
         arr = np.ascontiguousarray(arr).reshape(-1)         # rows are tuples: x0 y0 z0 x1 ...
-    elif rows and grid is not None and arr.ndim == 4 and arr.shape[:3] == grid:
+    elif grid is not None and arr.ndim == 4 and arr.shape[:3] == grid:
         ncomp_shape = arr.shape[3]
         # VTK order: the component fastest, then i, then j, then k
         arr = np.ravel(np.moveaxis(arr, -1, 0), order = 'F')
     elif nd3 and arr.ndim == 3:
         if grid is not None and arr.shape == grid:
             ncomp_shape = 1
-    elif not rows:
-        raise ValueError("%s must be a 1-D array%s, got shape %s"
-                         % (label, " (or a 3-D array of shape %s for scalars)" % (grid,)
-                            if grid is not None else "", arr.shape))
     else:
         accepted = "a 1-D array, or a 2-D array with one row per %s (%d rows)" % (tuple_word, ntuples)
         if grid is not None:
@@ -320,7 +312,7 @@ def _check_field(where, name, dtype_str, data, ntuples, allowed = _ALL_TYPES, sh
                             "" if ncomp == 1 else "s"))
     return [name, dtype_str, arr, ncomp]
 
-def _check_fields(fields, where, ntuples, allowed = _ALL_TYPES, shape3d = None, legacy = False):
+def _check_fields(fields, where, ntuples, allowed = _ALL_TYPES, shape3d = None):
     """ Check point or cell data and return a NEW list of [name, type, data_array, ncomp]
         (the caller's data are not modified).
 
@@ -335,17 +327,14 @@ def _check_fields(fields, where, ntuples, allowed = _ALL_TYPES, shape3d = None, 
         where:   "all_cell_data", "all_point_data", ... (used in error messages).
         ntuples: number of cells or points the data must cover.
         shape3d: the grid shape (nx, ny, nz) of a structured, rectilinear or image grid.
-        legacy:  only the list form with 1-D and 3-D arrays, as before 0.1.0 (used by
-                 timeseries_unstructuredGrid).
     """
     checked = []
     names = set()
-    for name, dtype_str, data in _field_entries(fields, where, dicts = not legacy):
+    for name, dtype_str, data in _field_entries(fields, where):
         if name in names:
             raise ValueError("%s: the name '%s' is used twice" % (where, name))
         names.add(name)
-        checked.append(_check_field(where, name, dtype_str, data, ntuples, allowed, shape3d,
-                                    rows = not legacy))
+        checked.append(_check_field(where, name, dtype_str, data, ntuples, allowed, shape3d))
     return checked
 
 def _concat_fields(where, *field_lists):
@@ -468,12 +457,7 @@ def _check_topology(connectivity, offsets, cell_types, npoints, higher_order_deg
 # =================================
 from io import StringIO as _TextBuffer
 
-def _write_text_atomically(path, text):
-    """ Write text to path via a temporary file, so a failure leaves no partial file. """
-    with XmlWriter(path, addDeclaration = False) as xml:
-        xml.addText(text)
-
-def _addDataToFile(vtkFile, all_cell_data, all_point_data, time_steps = None):
+def _addDataToFile(vtkFile, all_cell_data, all_point_data):
     """ Write the DataArray headers. Entries are [name, type, data, ncomp] as
         returned by _check_fields. """
     dt_strs = ["scalars", "vectors", "normals", "tensors", "tcoords"]
@@ -493,11 +477,7 @@ def _addDataToFile(vtkFile, all_cell_data, all_point_data, time_steps = None):
                     break
         vtkFile.openData(assoc, **default_vars)
         for name, dt, data, ncomp in fields:
-            if time_steps is not None:
-                for ti in time_steps:
-                    vtkFile.internal_addData(name, data, ncomp, str(ti))
-            else:
-                vtkFile.internal_addData(name, data, ncomp)
+            vtkFile.internal_addData(name, data, ncomp)
         vtkFile.closeData(assoc)
 
 def _appendDataToFile(vtkFile, all_cell_data, all_point_data):
@@ -558,15 +538,10 @@ def _write_unstructured(path, x, y, z, connectivity, offsets, cell_types,
         _appendDataToFile(w, all_cell_data = cell_fields, all_point_data = point_fields)
     return w.getFileName()
 
-def _write_time_values_grid(filepath, time_values, associated_file):
-    """ Write filepath + '.vtu': a one-line "fake" grid whose cell array "TimeValue"
-        holds the actual time value of each time step (see write_fake_grid_for_time). """
-    full_file = filepath + '.vtu'
-    _write_text_atomically(full_file, _time_values_grid_text(time_values, associated_file))
-    return full_file
-
 def _time_values_grid_text(time_values, associated_file):
-    """ Content of the "fake" grid file written by _write_time_values_grid. """
+    """ Content of the "fake" grid file written next to a single-file time series
+        (TimeSeriesUnstructuredGrid, time_values_file): a grid with one line cell whose cell
+        array "TimeValue" holds the actual time value of each time step. """
     time_file = _TextBuffer()
     time_file.write('<?xml version="1.0"?>\n')
     time_file.write('<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">\n')
@@ -1323,256 +1298,6 @@ def cylinderToVTK(path, x0, y0, z0, z1, radius, nlayers, npilars = 16, all_cell_
                                  all_cell_data = [f[:3] for f in cell_fields] or None,
                                  all_point_data = [f[:3] for f in point_fields] or None,
                                  comments = comments)
-
-# =================================
-#  time-series on unstructuredGrid
-# =================================
-#unstructuredGridToVTK
-class timeseries_unstructuredGrid:
-    """
-    DEPRECATED: use TimeSeriesUnstructuredGrid, which writes the same kind of single .vtu
-    file one time step at a time.  This class issues a DeprecationWarning and will be
-    removed in the next release.  Migration:
-
-        timeseries_unstructuredGrid(path, times) +           TimeSeriesUnstructuredGrid(path, x, y, z,
-        init_unstructuredGridToVTK(x, y, z, conn,      ->        conn, offsets, types, times = times,
-            offsets, types, ..., comments = ...)                 comments = ...)
-        append_data([...]) once per variable           ->    write_step(t, point_data = {...},
-            (all time values at once)                            cell_data = {...}) once per step
-        close_unstructuredGridToVTK()                  ->    close(), or a "with" block
-        write_fake_grid_for_time(path)                 ->    time_values_file = path (default: on,
-                                                             <path>_time_values.vtu)
-
-    The new file stores the steps time step by time step and the actual times in
-    TimeValues; VTK reads both files to the same data.
-    """
-
-    def __ts_convertListToArray(self, list1d):
-        ''' If data is a list and no a Numpy array, then it convert it
-            to an array, otherwise return the same array '''
-        if (list1d is not None) and (not isinstance(list1d, np.ndarray)):
-            if not isinstance(list1d, (list, tuple)):
-                raise TypeError("expected a list, tuple or numpy array, got %s"
-                                % type(list1d).__name__)
-            return np.array(list1d)
-        else:
-            return list1d
-
-    def __ts_convertDictListToArrays(self, data):
-        ''' If data in dictironary are lists and no a Numpy array,
-            then it creates a new dictionary and convert the list to arrays,
-            otherwise return the same dictionary '''
-        if data is not None:
-            dict = {}
-            for k, list1d in data.items():
-                dict[k] = self.__ts_convertListToArray(list1d)
-            return dict
-        else:
-            return data # None
-
-
-    def __init__(self, filepath, time_values):
-        """
-            PARAMETERS:
-                filepath: filename without extension (will be a .vtu file).
-                time_values: numpy array of time values.
-        """
-        warnings.warn("timeseries_unstructuredGrid is deprecated and will be removed in the next "
-                      "release of VTKwrite; use TimeSeriesUnstructuredGrid instead (see "
-                      "'Migrating from timeseries_unstructuredGrid' in the README)",
-                      DeprecationWarning, stacklevel = 2)
-        time_values = _to_vector("time_values", time_values)
-        if time_values.size == 0:
-            raise ValueError("time_values must contain at least one time value")
-        self.ftype = VtkUnstructuredGrid
-        self.filename = filepath
-        self.VtkFile_obj = []
-        self.time_values = time_values
-        self.data_order = []
-        # one entry per variable, in the order append_data must be called:
-        # (association, name, numpy dtype, number of values per time step)
-        self._expected = []
-        self._next = 0
-
-    def init_unstructuredGridToVTK(self, x, y, z, connectivity, offsets, cell_types, all_cell_data = None, all_point_data = None, comments = None):
-        """
-            INITIAL Export of unstructured grid and associated data (header info only).
-
-            PARAMETERS:
-                x, y, z: 1D list-type object (list, tuple or numpy) with coordinates of the vertices of cells. It is assumed that each element
-                         has diffent number of vertices.
-                connectivity: 1D list-type object (list, tuple or numpy) that defines the vertices associated to each element. 
-                              Together with offset define the connectivity or topology of the grid. 
-                              It is assumed that vertices in an element are listed consecutively.
-                offsets: 1D list-type object (list, tuple or numpy) with the index of the last vertex of each element in the connectivity array.
-                         It should have length nelem, where nelem is the number of cells or elements in the grid.
-                cell_types: 1D list-type object (list, tuple or numpy) with an integer that defines the cell type of each element in the grid.
-                            It should have size nelem. This should be assigned from VTKwrite.VtkXXXX.tid, where XXXX represents
-                            the type of cell. Please check the VTK file format specification for allowed cell types.                       
-                all_cell_data: A List of Lists.  It has this format:
-                        all_cell_data[ii] = cellData, where
-                        cellData is a List (of length 3) that defines a variable associated with the grid cells:
-                            cellData[0] = the *name* of the variable stored;
-                            cellData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                            cellData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
-                        Note: all data arrays inside "all_cell_data" must have the same number of elements (number of cells).
-                        Note: the length of "all_cell_data" is the number of variables (defined on cells).
-                all_point_data: A List of Lists.  It has this format:
-                        all_point_data[ii] = pointData, where
-                        pointData is a List (of length 3) that defines a variable associated with the grid vertices:
-                            pointData[0] = the *name* of the variable stored;
-                            pointData[1] = the *type* of the variable, i.e. "scalars", "vectors", "normals", "tensors", or "tcoords".
-                            pointData[2] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
-                        Note: all data arrays inside "all_point_data" must have the same number of elements (number of vertices).
-                        Note: the length of "all_point_data" is the number of variables (defined on vertices).
-                comments: list of comment strings, which will be added to the header section of the file.
-                
-            RETURNS:
-                XXX
-
-        """
-        if self.VtkFile_obj:
-            raise RuntimeError("init_unstructuredGridToVTK was already called")
-        x, y, z = _check_xyz(x, y, z)
-        npoints = x.size
-        connectivity, offsets, cell_types = _check_topology(
-            connectivity, offsets, cell_types, npoints,
-            _has_field(all_cell_data, "all_cell_data", "HigherOrderDegrees"))
-        ncells = cell_types.size
-
-        cell_fields = _check_fields(all_cell_data, "all_cell_data", ncells, legacy = True)
-        point_fields = _check_fields(all_point_data, "all_point_data", npoints, legacy = True)
-        comments = _check_comments(comments)
-
-        self._expected = ([("cell", f[0], f[2].dtype, f[2].size) for f in cell_fields] +
-                          [("point", f[0], f[2].dtype, f[2].size) for f in point_fields])
-        self._next = 0
-
-        self.VtkFile_obj = VtkFile(self.filename, VtkUnstructuredGrid,
-                                   version = _vtu_version(cell_types))
-        try:
-            if comments: self.VtkFile_obj.addComments(comments)
-
-            num_time_indices = len(self.time_values)
-            time_indices = np.arange(num_time_indices)
-            time_values_str = ' '.join(map(str, time_indices))
-            self.VtkFile_obj.openGrid(time_values = time_values_str)
-
-            self.VtkFile_obj.openPiece(ncells = ncells, npoints = npoints)
-            self.VtkFile_obj.openElement("Points")
-            self.VtkFile_obj.addData("points", (x,y,z))
-            self.VtkFile_obj.closeElement("Points")
-            self.VtkFile_obj.openElement("Cells")
-            self.VtkFile_obj.addData("connectivity", connectivity)
-            self.VtkFile_obj.addData("offsets", offsets)
-            self.VtkFile_obj.addData("types", cell_types)
-            self.VtkFile_obj.closeElement("Cells")
-
-            #self.data_order
-            # create time-step indices
-            time_steps = np.arange(len(self.time_values))
-            _addDataToFile(self.VtkFile_obj, all_cell_data = cell_fields, all_point_data = point_fields, time_steps = time_steps)
-
-            self.VtkFile_obj.closePiece()
-            self.VtkFile_obj.closeGrid()
-
-            self.VtkFile_obj.appendData( (x,y,z) )
-            self.VtkFile_obj.appendData(connectivity).appendData(offsets).appendData(cell_types)
-        except BaseException:
-            self.VtkFile_obj.abort()
-            raise
-
-    def append_data(self, varData):
-        """
-        Append data array (for a variable) at a specific time value.
-
-        PARAMETERS:
-            varData is a List of Lists where
-                    varData[ii] = the data array itself, i.e. a 1D list-type object (list, tuple or numpy).
-
-        Variables must be appended in the order given to init_unstructuredGridToVTK:
-        first all cell data, then all point data.  Each call must provide one array per
-        time value, each with the same number of values as the array given at
-        initialization.  Arrays of a different dtype are converted when NumPy's "safe"
-        casting rules allow it (e.g. float32 -> float64, int -> float64); otherwise a
-        TypeError is raised.  Nothing is written
-        if a check fails.
-        """
-        if not self.VtkFile_obj:
-            raise RuntimeError("call init_unstructuredGridToVTK before append_data")
-        if self.VtkFile_obj.xml.closed:
-            raise RuntimeError("the file has already been closed")
-        if varData is None:
-            raise ValueError("varData must be a list with one array per time value")
-        if self._next >= len(self._expected):
-            raise ValueError("append_data was called more times than there are variables (%d)"
-                             % len(self._expected))
-        assoc, name, dtype, size = self._expected[self._next]
-        where = "append_data for %s variable '%s'" % (assoc, name)
-        ntimes = len(self.time_values)
-        if len(varData) != ntimes:
-            raise ValueError("%s: got %d arrays, expected one per time value (%d)"
-                             % (where, len(varData), ntimes))
-
-        # check everything before writing anything
-        arrays = []
-        for ii in range(ntimes):
-            arr = _to_array("%s, time index %d" % (where, ii), varData[ii], bool_to_uint8 = True)
-            if arr.ndim not in (1, 3):
-                raise ValueError("%s, time index %d: must be a 1-D array, got shape %s"
-                                 % (where, ii, arr.shape))
-            if arr.size != size:
-                raise ValueError("%s, time index %d: %d values, expected %d"
-                                 % (where, ii, arr.size, size))
-            if arr.dtype != dtype:
-                if not np.can_cast(arr.dtype, dtype, casting = "safe"):
-                    raise TypeError("%s, time index %d: dtype %s cannot be safely converted to %s "
-                                    "(the dtype given at initialization)"
-                                    % (where, ii, arr.dtype, dtype))
-                arr = arr.astype(dtype)
-            arrays.append(arr)
-
-        # append data to binary section
-        for arr in arrays:
-            self.VtkFile_obj.appendData(arr)
-        self._next += 1
-
-    def close_unstructuredGridToVTK(self):
-        """
-        Close the file.
-
-        RETURNS:
-            Full path to saved file.
-
-        Raises ValueError (and discards the file) if append_data was not called for
-        every variable.
-        """
-        if not self.VtkFile_obj:
-            raise RuntimeError("call init_unstructuredGridToVTK first")
-        if self._next != len(self._expected):
-            missing = ", ".join("%s '%s'" % (a, n) for a, n, _, _ in self._expected[self._next:])
-            self.VtkFile_obj.abort()
-            raise ValueError("file discarded: no data was appended for %s" % missing)
-
-        self.VtkFile_obj.save()
-        return self.VtkFile_obj.getFileName()
-
-    def write_fake_grid_for_time(self, filepath):
-        """
-        This writes a "self-contained" .vtu file that contains an unstructured grid consisting of one line element,
-        and cellData consisting of a "TimeValue" variable that is indexed with the time-step.
-        The purpose of this is to have a way of storing actual time values that can be non-uniformly spaced, without
-        using a .pvd file.
-
-        You can then use this in Paraview by including the .vtu file in your pipeline.  Then just create a
-        Python Annotation Filter, and put this in the Expression field:  "Time: %1.2f" %TimeValue[0]
-        Note: you will need to hide the "grid" of this .vtu, which is no big deal.
-
-        RETURNS:
-            Full path to saved file.
-        """
-
-        return _write_time_values_grid(filepath, self.time_values, self.filename + self.ftype.ext)
 
 # =================================
 #  Streaming time series: one .vtu file, or a .pvd file with one .vtu per step

@@ -48,7 +48,7 @@ Copyright (c) 02-23-2025,  Shawn W. Walker
 ######################################################################################
 
 # The single place where the version is set (pyproject.toml reads it from here).
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .vtkbin import (
     VtkFile, VtkGroup,
@@ -69,7 +69,7 @@ from .lagrange import lagrange_nodes, lagrange_npoints, node_permutation, cellwi
 from .interface import (
     imageToVTK, rectilinearToVTK, structuredToVTK, pointsToVTK, pointsToVTKAsTIN,
     linesToVTK, polyLinesToVTK, unstructuredGridToVTK, cylinderToVTK,
-    TimeSeriesUnstructuredGrid, timeseries_unstructuredGrid,
+    TimeSeriesUnstructuredGrid,
 )
 
 # (__version__ is deliberately not in __all__: "from VTKwrite import *" should not
@@ -79,7 +79,7 @@ __all__ = [
     "imageToVTK", "rectilinearToVTK", "structuredToVTK", "pointsToVTK", "pointsToVTKAsTIN",
     "linesToVTK", "polyLinesToVTK", "unstructuredGridToVTK", "cylinderToVTK",
     # time series
-    "TimeSeriesUnstructuredGrid", "timeseries_unstructuredGrid",
+    "TimeSeriesUnstructuredGrid",
     # low level
     "VtkFile", "VtkGroup",
     "VtkImageData", "VtkPolyData", "VtkRectilinearGrid", "VtkStructuredGrid", "VtkUnstructuredGrid",

@@ -1,5 +1,11 @@
 # Changes
 
+## 0.2.0 (unreleased)
+
+- **Removed `timeseries_unstructuredGrid`**, which was deprecated in 0.1.0. Use `TimeSeriesUnstructuredGrid`; the README section "Migrating from `timeseries_unstructuredGrid`" shows how the calls translate. Files written with it can still be read as before.
+- Removed internal code that only that class used: `_write_time_values_grid`, `_write_text_atomically`, the per-variable time steps of `_addDataToFile`, and the pre-0.1.0 input rules of `_check_fields` (`legacy=`). The "fake grid" with the time values is still written by `TimeSeriesUnstructuredGrid` (`time_values_file=`).
+- Tests: `tests/test_timeseries.py` (the old class) is gone; the other tests that used the old class now cover `TimeSeriesUnstructuredGrid` only. One expected failure is left (`test_single_vtu_read_by_vtk`, the VTK 9.6 regression).
+
 ## 0.1.0 (2026-11-03)
 
 Fixes for files that were silently wrong or unreadable (review section 2):

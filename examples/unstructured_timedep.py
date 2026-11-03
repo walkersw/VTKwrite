@@ -8,9 +8,9 @@ all in one .vtu file, with TimeSeriesUnstructuredGrid.  In addition, the time
 values are stored separately using a "fake" grid.
 Check the VTK file format for details of the unstructured grid.
 
-(This example used the class timeseries_unstructuredGrid, which is deprecated; see
-"Migrating from timeseries_unstructuredGrid" in the README.  For more output options,
-see unstructured_timeseries.py.)
+(This example used the class timeseries_unstructuredGrid, which was removed in
+VTKwrite 0.2.0; see "Migrating from timeseries_unstructuredGrid" in the README.  For
+more output options, see unstructured_timeseries.py.)
 
 Copyright (c) 05-11-2021,  Shawn W. Walker
 """

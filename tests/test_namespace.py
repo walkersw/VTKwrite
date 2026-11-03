@@ -12,7 +12,8 @@ from VTKwrite import interface, vtkbin, lagrange
 ROOT = os.path.join(os.path.dirname(__file__), os.pardir)
 
 # Public names (other than modules) that VTKwrite.interface had in 0.0.4, partly through
-# "from .vtkbin import *".  They must stay importable from there.
+# "from .vtkbin import *".  They must stay importable from there.  (The exception,
+# timeseries_unstructuredGrid, was deprecated in 0.1.0 and removed in 0.2.0.)
 INTERFACE_0_0_4 = """
     TimeSeriesUnstructuredGrid VtkCellType VtkDataType VtkFile VtkFileType VtkFloat32
     VtkFloat64 VtkGroup VtkHexahedron VtkImageData VtkInt16 VtkInt32 VtkInt64 VtkInt8 VtkLine
@@ -22,7 +23,7 @@ INTERFACE_0_0_4 = """
     VtkTriangleStrip VtkUInt16 VtkUInt32 VtkUInt64 VtkUInt8 VtkUnstructuredGrid VtkVertex
     VtkVoxel VtkWedge XmlWriter cylinderToVTK imageToVTK linesToVTK np_to_vtk pointsToVTK
     pointsToVTKAsTIN polyLinesToVTK rectilinearToVTK sanitize_comment structuredToVTK
-    timeseries_unstructuredGrid unstructuredGridToVTK writeArrayToFile writeArraysToFile
+    unstructuredGridToVTK writeArrayToFile writeArraysToFile
     writeBlockSize""".split()
 
 CELL_TYPES = {"VtkVertex": "VTK_VERTEX", "VtkPolyVertex": "VTK_POLY_VERTEX",
@@ -94,6 +95,12 @@ def test_old_import_paths_still_work():
     for name in INTERFACE_0_0_4:
         if hasattr(vtkbin, name):
             assert getattr(interface, name) is getattr(vtkbin, name), name
+
+
+def test_removed_in_0_2_0():
+    assert not hasattr(VTKwrite, "timeseries_unstructuredGrid")
+    assert not hasattr(interface, "timeseries_unstructuredGrid")
+    assert "timeseries_unstructuredGrid" not in VTKwrite.__all__
 
 
 def test_cell_type_ids_match_vtk(vtk):

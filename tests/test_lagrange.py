@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from VTKwrite import (unstructuredGridToVTK, TimeSeriesUnstructuredGrid,
-                      timeseries_unstructuredGrid, lagrange_nodes, lagrange_npoints,
+                      lagrange_nodes, lagrange_npoints,
                       node_permutation, cellwise_mesh,
                       VtkLagrangeCurve, VtkLagrangeTriangle, VtkLagrangeQuadrilateral,
                       VtkLagrangeTetrahedron, VtkLagrangeHexahedron, VtkLagrangeWedge,
@@ -185,7 +185,6 @@ def test_lagrange_hexahedra_in_time_series(tmp_path, vtk, output):
     assert no_leftovers(tmp_path)
 
 
-@pytest.mark.filterwarnings("ignore:timeseries_unstructuredGrid is deprecated:DeprecationWarning")
 def test_file_version(tmp_path):
     nodes = lagrange_nodes(VtkLagrangeHexahedron, 2)
     hexa = unstructuredGridToVTK(str(tmp_path / "h"), points=nodes, connectivity=np.arange(27),
@@ -194,11 +193,6 @@ def test_file_version(tmp_path):
     tet = unstructuredGridToVTK(str(tmp_path / "t"), points=tet_nodes, connectivity=np.arange(10),
                                 offsets=[10], cell_types=[71])
     assert file_version(hexa) == "2.1" and file_version(tet) == "1.0"
-    ts = timeseries_unstructuredGrid(str(tmp_path / "legacy"), [0.0])
-    ts.init_unstructuredGridToVTK(nodes[:, 0], nodes[:, 1], nodes[:, 2], np.arange(27), [27], [72],
-                                  all_point_data=[["u", "scalars", np.zeros(27)]])
-    ts.append_data([np.zeros(27)])
-    assert file_version(ts.close_unstructuredGridToVTK()) == "2.1"
 
 
 # ---------------------------------------------------------------------------
@@ -291,14 +285,13 @@ def test_valid_point_counts(tmp_path, vtk):
         ts.write_step(0.0, point_data={"u": np.zeros(6)})
 
 
-@pytest.mark.filterwarnings("ignore:timeseries_unstructuredGrid is deprecated:DeprecationWarning")
 def test_point_counts_checked_in_time_series(tmp_path):
     with pytest.raises(ValueError, match="Lagrange_Triangle"):
         TimeSeriesUnstructuredGrid(str(tmp_path / "s"), points=np.zeros((5, 3)),
                                    connectivity=np.arange(5), offsets=[5], cell_types=[69])
-    ts = timeseries_unstructuredGrid(str(tmp_path / "t"), [0.0])
     with pytest.raises(ValueError, match="Quad"):
-        ts.init_unstructuredGridToVTK(np.zeros(3), np.zeros(3), np.zeros(3), np.arange(3), [3], [9])
+        TimeSeriesUnstructuredGrid(str(tmp_path / "t"), points=np.zeros((3, 3)),
+                                   connectivity=np.arange(3), offsets=[3], cell_types=[9])
     assert os.listdir(tmp_path) == []
 
 

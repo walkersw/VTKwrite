@@ -240,7 +240,7 @@ class VtkFile:
                 version: the VTKFile version to declare (keyword only).  "1.0" by default;
                          files with Lagrange hexahedra need "2.1" or later, because VTK
                          reorders their nodes in older files (unstructuredGridToVTK and
-                         the time-series classes choose this automatically).
+                         TimeSeriesUnstructuredGrid choose this automatically).
                 largeFile: ignored; kept so that existing calls keep working.  Every file
                            declares header_type="UInt64" (64-bit block sizes), so arrays
                            larger than 4 GB need no special option.

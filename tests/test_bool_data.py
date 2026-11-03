@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from VTKwrite import (unstructuredGridToVTK, imageToVTK, pointsToVTK, structuredToVTK,
-                      TimeSeriesUnstructuredGrid, timeseries_unstructuredGrid,
+                      TimeSeriesUnstructuredGrid,
                       VtkTriangle, VtkQuad)
 from conftest import read_appended, read_vtk, vtk_array, no_leftovers
 
@@ -103,17 +103,6 @@ def test_bool_step_after_float_first_step(tmp_path):
     blocks = read_appended(str(tmp_path / "sol.vtu"))
     assert blocks[("u", "1")].dtype == np.float64
     np.testing.assert_array_equal(blocks[("u", "1")], ON_BOUNDARY.astype(float))
-
-
-@pytest.mark.filterwarnings("ignore:timeseries_unstructuredGrid is deprecated:DeprecationWarning")
-def test_legacy_time_series(tmp_path):
-    ts = timeseries_unstructuredGrid(str(tmp_path / "ts"), [0.0, 1.0])
-    ts.init_unstructuredGridToVTK(*MESH, all_point_data=[["wet", "scalars", ON_BOUNDARY]])
-    ts.append_data([ON_BOUNDARY, ~ON_BOUNDARY])
-    blocks = read_appended(ts.close_unstructuredGridToVTK())
-    np.testing.assert_array_equal(blocks[("wet", "0")], ON_BOUNDARY)
-    np.testing.assert_array_equal(blocks[("wet", "1")], ~ON_BOUNDARY)
-    assert blocks[("wet", "1")].dtype == np.uint8
 
 
 def test_bool_coordinates_and_topology_still_rejected(tmp_path):

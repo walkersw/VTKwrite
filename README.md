@@ -132,7 +132,7 @@ with VtkGroup("out/series") as group:       # out/series.pvd is written when the
 
 ### Migrating from `timeseries_unstructuredGrid`
 
-`timeseries_unstructuredGrid` is deprecated: it issues a `DeprecationWarning` and will be removed in the next release. `TimeSeriesUnstructuredGrid` writes the same kind of single `.vtu` file, one time step at a time:
+`timeseries_unstructuredGrid` was deprecated in VTKwrite 0.1.0 and removed in 0.2.0. `TimeSeriesUnstructuredGrid` writes the same kind of single `.vtu` file, one time step at a time:
 
 | `timeseries_unstructuredGrid` | `TimeSeriesUnstructuredGrid` |
 |---|---|
@@ -154,7 +154,7 @@ Tests that need `vtk`, `h5py` or `scipy` are skipped if that package is missing.
 
 ## Known issue: single-file .vtu time series in VTK 9.6 / ParaView 6.1 and later
 
-VTK 9.6 and later, and therefore ParaView 6.1 and later, read only the first time step of a time series stored in a single `.vtu` file. That covers files written by `timeseries_unstructuredGrid` and by `TimeSeriesUnstructuredGrid` with `output="vtu"`. When such a file is opened, ParaView prints warnings like
+VTK 9.6 and later, and therefore ParaView 6.1 and later, read only the first time step of a time series stored in a single `.vtu` file. That covers files written by `TimeSeriesUnstructuredGrid` with `output="vtu"` (and by the former `timeseries_unstructuredGrid`). When such a file is opened, ParaView prints warnings like
 
 ```
 Warning: In vtkXMLDataReader.cxx, line 286
