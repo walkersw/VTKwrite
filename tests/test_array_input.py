@@ -186,6 +186,7 @@ def test_3d_arrays_still_taken_in_fortran_order(tmp_path):
     assert same_files(a, b, c)
 
 
+@pytest.mark.filterwarnings("ignore:timeseries_unstructuredGrid is deprecated:DeprecationWarning")
 def test_legacy_time_series_unchanged(tmp_path):
     """ timeseries_unstructuredGrid (to be deprecated) keeps the older input rules. """
     ts = timeseries_unstructuredGrid(str(tmp_path / "ts"), [0.0])

@@ -59,8 +59,13 @@ from .vtkbin import (
     VtkVertex, VtkPolyVertex, VtkLine, VtkPolyLine, VtkTriangle, VtkTriangleStrip,
     VtkPolygon, VtkPixel, VtkQuad, VtkTetra, VtkVoxel, VtkHexahedron, VtkWedge, VtkPyramid,
     VtkQuadraticEdge, VtkQuadraticTriangle, VtkQuadraticQuad, VtkQuadraticTetra,
-    VtkQuadraticHexahedron,
+    VtkQuadraticHexahedron, VtkQuadraticWedge, VtkQuadraticPyramid, VtkBiQuadraticQuad,
+    VtkTriQuadraticHexahedron, VtkBiQuadraticTriangle, VtkCubicLine, VtkTriQuadraticPyramid,
+    # arbitrary-order Lagrange cells (node order: lagrange_nodes)
+    VtkLagrangeCurve, VtkLagrangeTriangle, VtkLagrangeQuadrilateral, VtkLagrangeTetrahedron,
+    VtkLagrangeHexahedron, VtkLagrangeWedge,
 )
+from .lagrange import lagrange_nodes, lagrange_npoints, node_permutation, cellwise_mesh
 from .interface import (
     imageToVTK, rectilinearToVTK, structuredToVTK, pointsToVTK, pointsToVTKAsTIN,
     linesToVTK, polyLinesToVTK, unstructuredGridToVTK, cylinderToVTK,
@@ -83,5 +88,11 @@ __all__ = [
     "VtkVertex", "VtkPolyVertex", "VtkLine", "VtkPolyLine", "VtkTriangle", "VtkTriangleStrip",
     "VtkPolygon", "VtkPixel", "VtkQuad", "VtkTetra", "VtkVoxel", "VtkHexahedron", "VtkWedge",
     "VtkPyramid", "VtkQuadraticEdge", "VtkQuadraticTriangle", "VtkQuadraticQuad",
-    "VtkQuadraticTetra", "VtkQuadraticHexahedron",
+    "VtkQuadraticTetra", "VtkQuadraticHexahedron", "VtkQuadraticWedge", "VtkQuadraticPyramid",
+    "VtkBiQuadraticQuad", "VtkTriQuadraticHexahedron", "VtkBiQuadraticTriangle", "VtkCubicLine",
+    "VtkTriQuadraticPyramid",
+    "VtkLagrangeCurve", "VtkLagrangeTriangle", "VtkLagrangeQuadrilateral",
+    "VtkLagrangeTetrahedron", "VtkLagrangeHexahedron", "VtkLagrangeWedge",
+    # Lagrange cells
+    "lagrange_nodes", "lagrange_npoints", "node_permutation", "cellwise_mesh",
 ]

@@ -58,6 +58,7 @@ Copyright (c) 05-07-2021,  Shawn W. Walker
 import os
 import shutil
 import uuid
+import warnings
 
 import numpy as np
 
@@ -67,6 +68,9 @@ from .vtkbin import (VtkFile, VtkGroup,
                      _vtk_data_type, _number_to_string)
 from .xmlwrite import sanitize_comment, XmlWriter
 from .pyvtk import writeBlockSize, writeArrayToFile
+from .vtkbin import VtkCellType as _VtkCellType, VtkLagrangeHexahedron
+from . import vtkbin as _vtkbin
+from .lagrange import _LAGRANGE, _NPOINTS, _SPECIAL_NPOINTS, _lagrange_degree
 
 # Not used here, but importable from this module since it used "from .vtkbin import *";
 # kept so that existing imports such as "from VTKwrite.interface import VtkHexahedron"
@@ -362,8 +366,68 @@ def _check_comments(comments):
         comments = [comments]
     return [str(c) for c in comments]
 
-def _check_topology(connectivity, offsets, cell_types, npoints):
-    """ Check the unstructured-grid topology arrays against each other. """
+# Number of points of the cell types with a fixed number (checked against VTK 9.7.1's
+# vtkGenericCell), and the minimum for PolyVertex, PolyLine, TriangleStrip and Polygon.
+# Other ids (e.g. polyhedra, Bezier cells) are not checked.
+_FIXED_NPOINTS = {1 : 1, 3 : 2, 5 : 3, 8 : 4, 9 : 4, 10 : 4, 11 : 8, 12 : 8, 13 : 6, 14 : 5,
+                  15 : 10, 16 : 12, 21 : 3, 22 : 6, 23 : 8, 24 : 10, 25 : 20, 26 : 15, 27 : 13,
+                  28 : 9, 29 : 27, 30 : 6, 31 : 12, 32 : 18, 33 : 24, 34 : 7, 35 : 4, 37 : 19}
+_MIN_NPOINTS = {2 : 1, 4 : 1, 6 : 3, 7 : 3}
+# Lagrange cells whose degree may differ per direction if the cell data has an array
+# "HigherOrderDegrees" (VTK's convention); their point counts are then not checked
+_ANISOTROPIC_LAGRANGE = (70, 72, 73)
+
+def _cell_type_name(tid):
+    for value in vars(_vtkbin).values():
+        if isinstance(value, _VtkCellType) and value.tid == tid:
+            return "%s (type %d)" % (value.name, tid)
+    return "type %d" % tid
+
+def _check_cell_sizes(offsets, cell_types, higher_order_degrees = False):
+    """ Check the number of points of every cell against its type. """
+    if cell_types.size == 0:
+        return
+    sizes = np.diff(offsets, prepend = 0)
+    for tid in np.unique(cell_types):
+        tid = int(tid)
+        mine = cell_types == tid
+        ok = None
+        if tid in _FIXED_NPOINTS:
+            ok = sizes[mine] == _FIXED_NPOINTS[tid]
+            need = "%d points" % _FIXED_NPOINTS[tid]
+        elif tid in _MIN_NPOINTS:
+            ok = sizes[mine] >= _MIN_NPOINTS[tid]
+            need = "at least %d point%s" % (_MIN_NPOINTS[tid], "s" if _MIN_NPOINTS[tid] > 1 else "")
+        elif tid in _LAGRANGE and not (higher_order_degrees and tid in _ANISOTROPIC_LAGRANGE):
+            valid = {int(n) for n in np.unique(sizes[mine]) if _lagrange_degree(tid, int(n))}
+            ok = np.isin(sizes[mine], list(valid))
+            counts = ", ".join(str(_NPOINTS[tid](p)) for p in (1, 2, 3, 4))
+            need = "%s points for the degrees 1, 2, 3, 4, ...%s" % (
+                counts, (", or %d" % _SPECIAL_NPOINTS[tid]) if tid in _SPECIAL_NPOINTS else "")
+            if tid in _ANISOTROPIC_LAGRANGE:
+                need += " (other degrees per direction need a cell data array \"HigherOrderDegrees\")"
+        if ok is not None and not ok.all():
+            nbad = int(np.count_nonzero(~ok))
+            cell = int(np.flatnonzero(mine)[np.argmin(ok)])
+            raise ValueError("cell %d is a %s with %d points, but that cell type has %s "
+                             "(%d cell%s of this type %s wrong)"
+                             % (cell, _cell_type_name(tid), int(sizes[cell]), need, nbad,
+                                "" if nbad == 1 else "s", "is" if nbad == 1 else "are"))
+
+def _has_field(fields, where, name):
+    """ True if the point/cell data (dictionary or list form) has a field of this name. """
+    return any(entry[0] == name for entry in _field_entries(fields, where))
+
+def _vtu_version(cell_types):
+    """ The VTKFile version for an unstructured grid.  VTK's XML reader reorders the nodes
+        of Lagrange hexahedra (edges 10 and 11) in files declaring a version below 2.1, so
+        files with such cells declare 2.1 (in VTK's current node order); all others 1.0, as
+        before. """
+    return "2.1" if np.any(cell_types == VtkLagrangeHexahedron.tid) else "1.0"
+
+def _check_topology(connectivity, offsets, cell_types, npoints, higher_order_degrees = False):
+    """ Check the unstructured-grid topology arrays against each other, and the number of
+        points of each cell against its type (see _check_cell_sizes). """
     connectivity = _to_vector("connectivity", connectivity)
     offsets = _to_vector("offsets", offsets)
     cell_types = _to_vector("cell_types", cell_types)
@@ -388,6 +452,7 @@ def _check_topology(connectivity, offsets, cell_types, npoints):
                                 else connectivity.min()), npoints))
     if cell_types.size and (cell_types.min() < 0 or cell_types.max() > 255):
         raise ValueError("cell_types must be VTK cell type ids between 0 and 255")
+    _check_cell_sizes(offsets, cell_types, higher_order_degrees)
     # VTK expects integer topology arrays and UInt8 cell types; floats (e.g. from
     # np.zeros(n)) used to be written as Float64, which some readers reject.
     if connectivity.dtype.kind not in "iu":
@@ -469,7 +534,7 @@ def _write_unstructured(path, x, y, z, connectivity, offsets, cell_types,
     """ Write a .vtu file from already checked inputs. """
     npoints = x.size
     ncells = offsets.size   # one offset per cell
-    with VtkFile(path, VtkUnstructuredGrid) as w:
+    with VtkFile(path, VtkUnstructuredGrid, version = _vtu_version(cell_types)) as w:
         if comments: w.addComments(comments)
         w.openGrid()
         w.openPiece(ncells = ncells, npoints = npoints)
@@ -1134,7 +1199,9 @@ def unstructuredGridToVTK(path, x = None, y = None, z = None, connectivity = Non
                      It should have length nelem, where nelem is the number of cells or elements in the grid.
             cell_types: 1D list-type object (list, tuple or numpy) with an integer that defines the cell type of each element in the grid.
                         It should have size nelem. This should be assigned from VTKwrite.VtkXXXX.tid, where XXXX represents
-                        the type of cell. Please check the VTK file format specification for allowed cell types.                       
+                        the type of cell. Please check the VTK file format specification for allowed cell types.
+                        The number of points of each cell (from offsets) is checked against its type.
+                        For Lagrange cells (e.g. VtkLagrangeTriangle), see VTKwrite.lagrange for the node order.                       
             points: (keyword only) the points as one array of shape (n, 3), or (n, 2) for
                     z = 0, instead of x, y, z.
             all_cell_data: data on the cells: a dictionary {name: array} or {name: (type, array)}
@@ -1169,7 +1236,9 @@ def unstructuredGridToVTK(path, x = None, y = None, z = None, connectivity = Non
     _require("unstructuredGridToVTK", connectivity = connectivity, offsets = offsets,
              cell_types = cell_types)
     npoints = x.size
-    connectivity, offsets, cell_types = _check_topology(connectivity, offsets, cell_types, npoints)
+    connectivity, offsets, cell_types = _check_topology(
+        connectivity, offsets, cell_types, npoints,
+        _has_field(all_cell_data, "all_cell_data", "HigherOrderDegrees"))
     ncells = cell_types.size
 
     cell_fields = _check_fields(all_cell_data, "all_cell_data", ncells)
@@ -1260,6 +1329,23 @@ def cylinderToVTK(path, x0, y0, z0, z1, radius, nlayers, npilars = 16, all_cell_
 # =================================
 #unstructuredGridToVTK
 class timeseries_unstructuredGrid:
+    """
+    DEPRECATED: use TimeSeriesUnstructuredGrid, which writes the same kind of single .vtu
+    file one time step at a time.  This class issues a DeprecationWarning and will be
+    removed in the next release.  Migration:
+
+        timeseries_unstructuredGrid(path, times) +           TimeSeriesUnstructuredGrid(path, x, y, z,
+        init_unstructuredGridToVTK(x, y, z, conn,      ->        conn, offsets, types, times = times,
+            offsets, types, ..., comments = ...)                 comments = ...)
+        append_data([...]) once per variable           ->    write_step(t, point_data = {...},
+            (all time values at once)                            cell_data = {...}) once per step
+        close_unstructuredGridToVTK()                  ->    close(), or a "with" block
+        write_fake_grid_for_time(path)                 ->    time_values_file = path (default: on,
+                                                             <path>_time_values.vtu)
+
+    The new file stores the steps time step by time step and the actual times in
+    TimeValues; VTK reads both files to the same data.
+    """
 
     def __ts_convertListToArray(self, list1d):
         ''' If data is a list and no a Numpy array, then it convert it
@@ -1291,6 +1377,10 @@ class timeseries_unstructuredGrid:
                 filepath: filename without extension (will be a .vtu file).
                 time_values: numpy array of time values.
         """
+        warnings.warn("timeseries_unstructuredGrid is deprecated and will be removed in the next "
+                      "release of VTKwrite; use TimeSeriesUnstructuredGrid instead (see "
+                      "'Migrating from timeseries_unstructuredGrid' in the README)",
+                      DeprecationWarning, stacklevel = 2)
         time_values = _to_vector("time_values", time_values)
         if time_values.size == 0:
             raise ValueError("time_values must contain at least one time value")
@@ -1345,7 +1435,9 @@ class timeseries_unstructuredGrid:
             raise RuntimeError("init_unstructuredGridToVTK was already called")
         x, y, z = _check_xyz(x, y, z)
         npoints = x.size
-        connectivity, offsets, cell_types = _check_topology(connectivity, offsets, cell_types, npoints)
+        connectivity, offsets, cell_types = _check_topology(
+            connectivity, offsets, cell_types, npoints,
+            _has_field(all_cell_data, "all_cell_data", "HigherOrderDegrees"))
         ncells = cell_types.size
 
         cell_fields = _check_fields(all_cell_data, "all_cell_data", ncells, legacy = True)
@@ -1356,7 +1448,8 @@ class timeseries_unstructuredGrid:
                           [("point", f[0], f[2].dtype, f[2].size) for f in point_fields])
         self._next = 0
 
-        self.VtkFile_obj = VtkFile(self.filename, VtkUnstructuredGrid)
+        self.VtkFile_obj = VtkFile(self.filename, VtkUnstructuredGrid,
+                                   version = _vtu_version(cell_types))
         try:
             if comments: self.VtkFile_obj.addComments(comments)
 
@@ -1512,7 +1605,9 @@ class TimeSeriesUnstructuredGrid:
       temporary file next to the target and assembled when close() is called.
       ParaView/VTK use the step index (0, 1, 2, ...) as "time" for such files; the actual
       time values are written to TimeValues and, if time_values_file is set, to a small
-      companion file (see timeseries_unstructuredGrid.write_fake_grid_for_time).
+      companion file: a one-cell "fake grid" whose cell array TimeValue holds the time of
+      each step (in ParaView, show it with a Python Annotation filter,
+      "Time: %1.2f" %TimeValue[0], and hide the fake grid).
       The .vtu only exists once close() has succeeded.
       NOTE: VTK 9.6 and later (e.g. ParaView 6.1) have a bug that reads only the first
       time step of such files; use output = "vtkhdf" or "pvd" for those versions.
@@ -1586,8 +1681,9 @@ class TimeSeriesUnstructuredGrid:
         x, y, z = _check_xyz(*_xyz_or_points(x, y, z, points))
         _require("TimeSeriesUnstructuredGrid", connectivity = connectivity, offsets = offsets,
                  cell_types = cell_types)
-        connectivity, offsets, cell_types = _check_topology(connectivity, offsets, cell_types,
-                                                            x.size)
+        connectivity, offsets, cell_types = _check_topology(
+            connectivity, offsets, cell_types, x.size,
+            _has_field(static_cell_data, "static_cell_data", "HigherOrderDegrees"))
         self._mesh = (x, y, z, connectivity, offsets, cell_types)
         self._npoints, self._ncells = x.size, offsets.size
         self._static = {"point" : self._fields(static_point_data, "static_point_data", "point"),
@@ -1890,7 +1986,7 @@ class TimeSeriesUnstructuredGrid:
             where G is the size of the mesh and static blocks and S that of one step. """
         x, y, z, connectivity, offsets, cell_types = self._mesh
         nsteps = len(times)
-        w = VtkFile(self.path, VtkUnstructuredGrid)
+        w = VtkFile(self.path, VtkUnstructuredGrid, version = _vtu_version(cell_types))
         self._vtk = w
         if self._comments: w.addComments(self._comments)
         w.openGrid(time_values = " ".join(_number_to_string(float(t)) for t in times))

@@ -95,6 +95,22 @@ VtkQuadraticTriangle = VtkCellType(22, "Quadratic_Triangle")
 VtkQuadraticQuad = VtkCellType(23, "Quadratic_Quad")
 VtkQuadraticTetra = VtkCellType(24, "Quadratic_Tetra")
 VtkQuadraticHexahedron = VtkCellType(25, "Quadratic_Hexahedron")
+VtkQuadraticWedge = VtkCellType(26, "Quadratic_Wedge")
+VtkQuadraticPyramid = VtkCellType(27, "Quadratic_Pyramid")
+VtkBiQuadraticQuad = VtkCellType(28, "BiQuadratic_Quad")
+VtkTriQuadraticHexahedron = VtkCellType(29, "TriQuadratic_Hexahedron")
+VtkBiQuadraticTriangle = VtkCellType(34, "BiQuadratic_Triangle")
+VtkCubicLine = VtkCellType(35, "Cubic_Line")
+VtkTriQuadraticPyramid = VtkCellType(37, "TriQuadratic_Pyramid")
+# Arbitrary-order Lagrange cells: the degree follows from the number of points of a cell.
+# Their node order is given by VTKwrite.lagrange.lagrange_nodes.  (VTK defines no usable
+# Lagrange pyramid: type 74 is read as an empty cell.)
+VtkLagrangeCurve = VtkCellType(68, "Lagrange_Curve")
+VtkLagrangeTriangle = VtkCellType(69, "Lagrange_Triangle")
+VtkLagrangeQuadrilateral = VtkCellType(70, "Lagrange_Quadrilateral")
+VtkLagrangeTetrahedron = VtkCellType(71, "Lagrange_Tetrahedron")
+VtkLagrangeHexahedron = VtkCellType(72, "Lagrange_Hexahedron")
+VtkLagrangeWedge = VtkCellType(73, "Lagrange_Wedge")
 
 def _vtk_data_type(dtype_name):
     """ Return the VtkDataType for a numpy dtype name, or raise TypeError. """
@@ -170,22 +186,44 @@ class VtkGroup:
         """ Discard this VtkGroup without writing it. """
         self.xml.abort()
     
-    def addFile(self, filepath, sim_time, group = "", part = "0"):
+    def addFile(self, filepath, sim_time, group = "", part = "0", name = None):
         """ Adds file to this VTK group.
 
             PARAMETERS:
-                filepath: full path to VTK file.
+                filepath: path to the VTK file.  It is stored relative to the folder of the
+                          .pvd file, with "/" as the separator (which ParaView accepts on
+                          every platform), or as an absolute path if no relative path exists
+                          (on Windows: a file on another drive than the .pvd).
                 sim_time: simulated time.
-                group: This attribute is not required; it is only for informational purposes.
-                part: It is an integer value greater than or equal to 0.
-                
+                group:    written as the "group" attribute (informational).
+                part:     written as the "part" attribute, an integer >= 0 (informational).
+                name:     optional: written as the "name" attribute, which ParaView uses as
+                          the name of the block (see below).
+
+            Several files may share a time step: give them exactly the same sim_time (the
+            values are compared as written in the file).  ParaView then shows that step as
+            a multiblock dataset with one block per file, in the order of the addFile calls,
+            named by "name".  ParaView's PVD reader selects files by "timestep" only and
+            does not interpret "group" or "part".  (This is how the source of ParaView's
+            vtkPVDReader and vtkXMLCollectionReader works; it was not tested in ParaView.)
+
             See: http://www.paraview.org/Wiki/ParaView/Data_formats#PVD_File_Format for details.
         """
-        # TODO: Check what the other attributes are for.
-        filename = os.path.relpath(filepath, start = self.root)
+        attributes = dict(timestep = sim_time, group = group, part = part,
+                          file = self._stored_path(filepath))
+        if name is not None:
+            attributes["name"] = name
         self.xml.openElement("DataSet")
-        self.xml.addAttributes(timestep = sim_time, group = group, part = part, file = filename)
+        self.xml.addAttributes(**attributes)
         self.xml.closeElement()
+
+    def _stored_path(self, filepath):
+        """ The path of a data file as written in the .pvd (see addFile). """
+        try:
+            path = os.path.relpath(filepath, start = self.root)
+        except ValueError:      # Windows: the file is on another drive than the .pvd
+            path = os.path.abspath(filepath)
+        return path.replace(os.sep, "/")
         
 
 
@@ -194,22 +232,28 @@ class VtkGroup:
 # ================================
 class VtkFile:
     
-    def __init__(self, filepath, ftype, largeFile = False):
+    def __init__(self, filepath, ftype, largeFile = False, *, version = "1.0"):
         """
             PARAMETERS:
                 filepath: filename without extension.
                 ftype: file type, e.g. VtkImageData, etc.
+                version: the VTKFile version to declare (keyword only).  "1.0" by default;
+                         files with Lagrange hexahedra need "2.1" or later, because VTK
+                         reorders their nodes in older files (unstructuredGridToVTK and
+                         the time-series classes choose this automatically).
                 largeFile: ignored; kept so that existing calls keep working.  Every file
                            declares header_type="UInt64" (64-bit block sizes), so arrays
                            larger than 4 GB need no special option.
         """
+        if not isinstance(version, str) or not version:
+            raise TypeError("version must be a string such as '1.0', got %r" % (version,))
         self.ftype = ftype
         self.filename = filepath + ftype.ext
         self.xml = XmlWriter(self.filename)
         self.offset = 0  # offset in bytes after beginning of binary section
         self.appendedDataIsOpen = False
         self.xml.openElement("VTKFile").addAttributes(type = ftype.name,
-                                                          version = "1.0",
+                                                          version = version,
                                                           byte_order = _get_byte_order(),
                                                           header_type = "UInt64")
 

@@ -3,6 +3,7 @@ import shutil
 import array_input
 import group
 import image
+import lagrange_cells
 import lines
 import points
 import poly_lines
@@ -24,6 +25,7 @@ def clean_all():
     array_input.clean()
     group.clean()
     image.clean()
+    lagrange_cells.clean()
     lines.clean()
     points.clean()
     poly_lines.clean()
@@ -43,6 +45,7 @@ def test_all():
     testit(array_input.run)
     testit(group.run)
     testit(image.run)
+    testit(lagrange_cells.run)
     testit(lines.run)
     testit(points.run)
     testit(poly_lines.run)

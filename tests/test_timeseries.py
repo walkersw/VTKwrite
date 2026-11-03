@@ -1,5 +1,7 @@
-"""Single-file time series (timeseries_unstructuredGrid)."""
+"""Single-file time series (timeseries_unstructuredGrid, deprecated; kept until it is
+removed)."""
 import os
+import warnings
 
 import numpy as np
 import pytest
@@ -9,6 +11,19 @@ from VTKwrite.vtkbin import VtkTriangle
 from conftest import read_appended, read_vtk, vtk_array, no_leftovers
 
 TIMES = np.array([0.0, 0.1, 0.25])
+
+# the class is deprecated; its tests run without the warning (checked once below)
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:timeseries_unstructuredGrid is deprecated:DeprecationWarning")
+
+
+def test_deprecation_warning():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        timeseries_unstructuredGrid("unused", TIMES)          # writes nothing
+    assert len(caught) == 1 and caught[0].category is DeprecationWarning
+    assert "TimeSeriesUnstructuredGrid" in str(caught[0].message)
+    assert caught[0].filename == __file__                    # points at the caller
 
 
 def start(tmp_path, name="ts"):

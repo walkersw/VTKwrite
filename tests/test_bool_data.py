@@ -105,6 +105,7 @@ def test_bool_step_after_float_first_step(tmp_path):
     np.testing.assert_array_equal(blocks[("u", "1")], ON_BOUNDARY.astype(float))
 
 
+@pytest.mark.filterwarnings("ignore:timeseries_unstructuredGrid is deprecated:DeprecationWarning")
 def test_legacy_time_series(tmp_path):
     ts = timeseries_unstructuredGrid(str(tmp_path / "ts"), [0.0, 1.0])
     ts.init_unstructuredGridToVTK(*MESH, all_point_data=[["wet", "scalars", ON_BOUNDARY]])

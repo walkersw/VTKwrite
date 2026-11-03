@@ -109,4 +109,38 @@ Friendlier array input (review section 6):
 - New example `examples/array_input.py`: a thick-walled cylinder with its displacement and stress tensor, written as an unstructured and as a structured grid. The README has a new section on these forms, and the module docstring of `VTKwrite.interface` describes them in full.
 - New tests in `tests/test_array_input.py`. The structured, rectilinear and image grids are checked entry by entry with VTK's own (i, j, k) to id functions.
 
-Still open (see the review): FEM cell types (quadratic wedge/pyramid, Lagrange cells), a .vtp writer, and compression.
+FEM cell types (review section 6):
+
+- New cell types: `VtkQuadraticWedge` (26), `VtkQuadraticPyramid` (27), `VtkBiQuadraticQuad` (28), `VtkTriQuadraticHexahedron` (29), `VtkBiQuadraticTriangle` (34), `VtkCubicLine` (35), `VtkTriQuadraticPyramid` (37), and the arbitrary-order Lagrange cells `VtkLagrangeCurve` (68), `VtkLagrangeTriangle` (69), `VtkLagrangeQuadrilateral` (70), `VtkLagrangeTetrahedron` (71), `VtkLagrangeHexahedron` (72) and `VtkLagrangeWedge` (73). There is no Lagrange pyramid: VTK defines type 74 but reads it as an empty cell.
+- New module `VTKwrite.lagrange` (NumPy only; also importable from `VTKwrite`):
+  - `lagrange_nodes(cell_type, degree, vertices=None)`: the reference coordinates of the nodes of a Lagrange cell in VTK's order, on VTK's reference cell or mapped to another one;
+  - `lagrange_npoints(cell_type, degree)`;
+  - `node_permutation(cell_type, degree, nodes, vertices=None)`: the order in which to take the nodes of another element so that they are in VTK's order. It raises `ValueError` if the nodes are not VTK's equispaced nodes (e.g. Gauss-Lobatto points), in which case the fields must be evaluated at `lagrange_nodes(...)` instead;
+  - `cellwise_mesh(cell_points, cell_type)`: a mesh in which every cell has its own nodes (discontinuous fields), returned as keyword arguments for `unstructuredGridToVTK` and `TimeSeriesUnstructuredGrid`.
+- **Lagrange hexahedra were read wrongly.** VTK's XML reader swaps the nodes of hexahedron edges 10 and 11 in files that declare a `VTKFile` version below 2.1, and VTKwrite declared 1.0. Files that contain Lagrange hexahedra now declare 2.1 (checked with VTK 9.2.6, 9.5.2 and 9.7.1; the `.vtkhdf` output is not affected). All other files still declare 1.0 and are unchanged. `VtkFile` has a new keyword argument `version`.
+- **The number of points of every cell is checked against its type** (`ValueError`, naming the first wrong cell). This covers the cell types with a fixed number of points (checked against VTK), the minimum for poly-vertices, polylines, triangle strips and polygons, and the Lagrange cells (including VTK's bubble-enriched 7-node triangle, 15-node tetrahedron and 21-node wedge). Lagrange quadrilaterals, hexahedra and wedges are not checked if the cell data has VTK's `"HigherOrderDegrees"` array (different degrees per direction). Before, a wrong count gave a broken file without an error.
+- New example `examples/lagrange_cells.py`: a curved quarter annulus as degree-3 Lagrange quadrilaterals with shared nodes, and as degree-2 Lagrange triangles with a discontinuous field. README: a section on higher-order cells.
+- New tests in `tests/test_lagrange.py`, for degrees 1 to 3. The node order is compared with VTK's own index functions, and a polynomial map of degree p, written as one order-p cell, must be reproduced by VTK to round-off at random points. The node order alone is also compared for degrees 4 to 6, where the orientation of the nodes inside a face first matters.
+
+Collections (`VtkGroup`):
+
+- `addFile` stores the path of a data file with `/` as the separator, so a `.pvd` written on Windows can also be read elsewhere. On Linux and macOS nothing changes.
+- `addFile` no longer fails on Windows when the data file is on another drive than the `.pvd` (`os.path.relpath` raised `ValueError`); the absolute path is stored instead.
+- New optional argument `name`: written as the `name` attribute, which ParaView uses as the block name.
+- Documented how several files per time step are shown (one block per file), and that ParaView's PVD reader ignores `group` and `part`. This is taken from ParaView's source code and was not tested in ParaView.
+
+Deprecated:
+
+- `timeseries_unstructuredGrid` issues a `DeprecationWarning` and will be removed in the next release. Use `TimeSeriesUnstructuredGrid`:
+  - `timeseries_unstructuredGrid(path, times)` plus `init_unstructuredGridToVTK(x, y, z, ...)` becomes the constructor `TimeSeriesUnstructuredGrid(path, x, y, z, ..., times=times)`;
+  - the `append_data([...])` calls, one per variable, become one `write_step(t, point_data={...}, cell_data={...})` call per time step;
+  - `close_unstructuredGridToVTK()` becomes `close()`, or a `with` block;
+  - `write_fake_grid_for_time(path)` is replaced by `time_values_file=` (on by default).
+  The README has the same migration note.
+- `examples/unstructured_timedep.py` now uses `TimeSeriesUnstructuredGrid`. Its file `unstructured_timedep_all.vtu` has a different layout (steps stored time step by time step, the actual times in `TimeValues`), but VTK 9.5 reads it to the same arrays at every step as before. In `unstructured_timedep_time_values.vtu`, only a comment changed (the associated file name, without `./`). `unstructured_timedep_grid_only.vtu` is unchanged.
+
+Documentation:
+
+- README: a section on `VtkGroup`, and a note on meshio. meshio 5.3.5 fails with `Incorrect padding` on many raw-appended `.vtu` files on Python 3.13 and later, including files written by VTK itself; it reads them with Python 3.12 and earlier.
+
+Still open: removing `timeseries_unstructuredGrid` in the next release. Not planned: a .vtp writer and compression.

@@ -4,18 +4,20 @@ Example of how to use the high level unstructuredGridToVTK function.
 This example shows how to export *only* an unstructured grid given its
 vertices and topology through connectivity and offset lists.
 It also shows how to store a static grid and a "time-sequence" of data
-all in one .vtu file.  In addition, the time values are stored separately
-using a "fake" grid.
+all in one .vtu file, with TimeSeriesUnstructuredGrid.  In addition, the time
+values are stored separately using a "fake" grid.
 Check the VTK file format for details of the unstructured grid.
+
+(This example used the class timeseries_unstructuredGrid, which is deprecated; see
+"Migrating from timeseries_unstructuredGrid" in the README.  For more output options,
+see unstructured_timeseries.py.)
 
 Copyright (c) 05-11-2021,  Shawn W. Walker
 """
 
 import os
-from VTKwrite.interface import unstructuredGridToVTK
-from VTKwrite.interface import timeseries_unstructuredGrid
-from VTKwrite.vtkbin import VtkTriangle, VtkQuad
-from VTKwrite.vtkbin import VtkGroup
+from VTKwrite import unstructuredGridToVTK, TimeSeriesUnstructuredGrid
+from VTKwrite import VtkTriangle, VtkQuad
 import numpy as np
 
 FILE_PATH_GRID = "./unstructured_timedep_grid_only"
@@ -104,80 +106,27 @@ def run():
     f1_ref[2,:] = 3*(x + z)
     f1_ref = f1_ref.flatten('F')
     
-    p0 = p0_ref
-    p1 = p1_ref
-    v0 = v0_ref
-    v1 = v1_ref
-    pot0 = pot0_ref
-    pot1 = pot1_ref
-    f0 = f0_ref
-    f1 = f1_ref
-    
-    # data defined on cells
-    all_cell_data = []
-    all_cell_data.append(["pressure0", "scalars", p0])
-    all_cell_data.append(["pressure1", "scalars", p1])
-    all_cell_data.append(["vel0", "vectors", v0])
-    all_cell_data.append(["vel1", "vectors", v1])
-
-    # data defined at points
-    all_point_data = []
-    all_point_data.append(["potential0", "scalars", pot0])
-    all_point_data.append(["potential1", "scalars", pot1])
-    all_point_data.append(["flux0", "vectors", f0])
-    all_point_data.append(["flux1", "vectors", f1])
-    
     # vector of time values
     tv_vec = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
-    
-    # now begin writing the grid that will include all time-dependent data
-    ts_ugrid = timeseries_unstructuredGrid(FILE_PATH_ALL, tv_vec)
-    ts_ugrid.init_unstructuredGridToVTK(x, y, z, connectivity = conn, offsets = offset, cell_types = ctype, all_cell_data = all_cell_data, all_point_data = all_point_data, comments = comments)
-    
-    # BEGIN: create time-dependent data
-    p0_tv = [p0] * 5
-    p1_tv = [p1] * 5
-    v0_tv = [v0] * 5
-    v1_tv = [v1] * 5
-    pot0_tv = [pot0] * 5
-    pot1_tv = [pot1] * 5
-    f0_tv = [f0] * 5
-    f1_tv = [f1] * 5
 
-    for ii in range(5):
-        p0_tv[ii] = np.sin(np.pi * tv_vec[ii]) * p0_ref
-        p1_tv[ii] = np.sin(np.pi * tv_vec[ii]) * p1_ref
-        v0_tv[ii] = np.sin(np.pi * tv_vec[ii]) * v0_ref
-        v1_tv[ii] = np.sin(np.pi * tv_vec[ii]) * v1_ref
-        pot0_tv[ii] = np.sin(np.pi * tv_vec[ii]) * pot0_ref
-        pot1_tv[ii] = np.sin(np.pi * tv_vec[ii]) * pot1_ref
-        f0_tv[ii] = np.sin(np.pi * tv_vec[ii]) * f0_ref
-        f1_tv[ii] = np.sin(np.pi * tv_vec[ii]) * f1_ref
-    # END: create time-dependent data
-    
-    # write the data (in order!!!!)
-    # this order needs to be the same as what was given above.
-    # cell data first...
-    ts_ugrid.append_data(p0_tv)
-    ts_ugrid.append_data(p1_tv)
-    ts_ugrid.append_data(v0_tv)
-    ts_ugrid.append_data(v1_tv)
-    
-    # ... then point data.
-    ts_ugrid.append_data(pot0_tv)
-    ts_ugrid.append_data(pot1_tv)
-    ts_ugrid.append_data(f0_tv)
-    ts_ugrid.append_data(f1_tv)
-    
-    # close the file
-    ts_ugrid.close_unstructuredGridToVTK()
-    
-    # now write a "fake" .vtu file for a mesh with one cell, which defines a "TimeValue" variable for that one cell.
-    ts_ugrid.write_fake_grid_for_time(FILE_PATH_TIME)
-    # this .vtu file can be included in the Paraview pipeline.  You can display the actual time variable by
-    # using a Python Annotation Filter:  "Time: %1.2f" %TimeValue[0]
-    # this is useful for non-uniform time steps
-    # make sure to hide the fake grid
+    # Write the grid and all time steps into one .vtu file, one step at a time.  The time
+    # values are also written to a "fake" grid (FILE_PATH_TIME + ".vtu") with one cell,
+    # whose cell variable "TimeValue" holds the time of each step.  That .vtu file can be
+    # included in the Paraview pipeline: display the actual time with a Python Annotation
+    # Filter, "Time: %1.2f" %TimeValue[0].  This is useful for non-uniform time steps;
+    # make sure to hide the fake grid.
+    with TimeSeriesUnstructuredGrid(FILE_PATH_ALL, x, y, z, connectivity = conn, offsets = offset,
+                                    cell_types = ctype, times = tv_vec, comments = comments,
+                                    time_values_file = FILE_PATH_TIME) as ts:
+        for t in tv_vec:
+            s = np.sin(np.pi * t)
+            # data defined on cells (vectors: one row per cell) ...
+            cell_data = {"pressure0": s * p0_ref, "pressure1": s * p1_ref,
+                         "vel0": s * v0_ref.reshape(3, 3), "vel1": s * v1_ref.reshape(3, 3)}
+            # ... and at points (vectors: one row per point)
+            point_data = {"potential0": s * pot0_ref, "potential1": s * pot1_ref,
+                          "flux0": s * f0_ref.reshape(6, 3), "flux1": s * f1_ref.reshape(6, 3)}
+            ts.write_step(t, point_data = point_data, cell_data = cell_data)
 
 if __name__ == "__main__":
     run()

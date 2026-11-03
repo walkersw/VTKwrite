@@ -7,7 +7,7 @@ import sys
 import pytest
 
 import VTKwrite
-from VTKwrite import interface, vtkbin
+from VTKwrite import interface, vtkbin, lagrange
 
 ROOT = os.path.join(os.path.dirname(__file__), os.pardir)
 
@@ -35,7 +35,20 @@ CELL_TYPES = {"VtkVertex": "VTK_VERTEX", "VtkPolyVertex": "VTK_POLY_VERTEX",
               "VtkQuadraticTriangle": "VTK_QUADRATIC_TRIANGLE",
               "VtkQuadraticQuad": "VTK_QUADRATIC_QUAD",
               "VtkQuadraticTetra": "VTK_QUADRATIC_TETRA",
-              "VtkQuadraticHexahedron": "VTK_QUADRATIC_HEXAHEDRON"}
+              "VtkQuadraticHexahedron": "VTK_QUADRATIC_HEXAHEDRON",
+              "VtkQuadraticWedge": "VTK_QUADRATIC_WEDGE",
+              "VtkQuadraticPyramid": "VTK_QUADRATIC_PYRAMID",
+              "VtkBiQuadraticQuad": "VTK_BIQUADRATIC_QUAD",
+              "VtkTriQuadraticHexahedron": "VTK_TRIQUADRATIC_HEXAHEDRON",
+              "VtkBiQuadraticTriangle": "VTK_BIQUADRATIC_TRIANGLE",
+              "VtkCubicLine": "VTK_CUBIC_LINE",
+              "VtkTriQuadraticPyramid": "VTK_TRIQUADRATIC_PYRAMID",
+              "VtkLagrangeCurve": "VTK_LAGRANGE_CURVE",
+              "VtkLagrangeTriangle": "VTK_LAGRANGE_TRIANGLE",
+              "VtkLagrangeQuadrilateral": "VTK_LAGRANGE_QUADRILATERAL",
+              "VtkLagrangeTetrahedron": "VTK_LAGRANGE_TETRAHEDRON",
+              "VtkLagrangeHexahedron": "VTK_LAGRANGE_HEXAHEDRON",
+              "VtkLagrangeWedge": "VTK_LAGRANGE_WEDGE"}
 
 
 def test_version():
@@ -57,7 +70,7 @@ def test_all_names_exist_and_are_the_originals():
     assert len(VTKwrite.__all__) == len(set(VTKwrite.__all__))
     for name in VTKwrite.__all__:
         obj = getattr(VTKwrite, name)
-        source = interface if hasattr(interface, name) else vtkbin
+        source = next(m for m in (interface, vtkbin, lagrange) if hasattr(m, name))
         assert obj is getattr(source, name), name
 
 
